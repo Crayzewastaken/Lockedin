@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Locked In</string>
+    <string name="enforcer_desc">Keeps you on your morning video until you have watched it and passed the quiz. It watches which app is on screen and brings the video back if you leave. It does not read or store anything you type.</string>
+</resources>
