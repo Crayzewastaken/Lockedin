@@ -281,7 +281,7 @@ class LockActivity : Activity() {
         wv.loadUrl("https://$PLAYER_HOST/player.html")
 
         // Start writing the quiz in the background while you watch.
-        if (p.quizJson.isEmpty() && Session.readTranscript(this).isNotBlank()) ensureQuiz()
+        if (p.quizJson.isEmpty() && Quiz.canQuiz(this, p)) ensureQuiz()
     }
 
     private fun playerHtml(videoId: String, start: Int): String = """
@@ -484,8 +484,7 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
 
     private fun showQuiz(err: String?) {
         clear(Session.QUIZ)
-        val transcript = Session.readTranscript(this)
-        if (transcript.isBlank() || (p.quizJson.isEmpty() && p.quizFails >= 4 && p.claudeKey.isNotBlank())) {
+        if (!Quiz.canQuiz(this, p) || (p.quizJson.isEmpty() && p.quizFails >= 4)) {
             showReflection()
             return
         }
@@ -499,10 +498,7 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
             } else {
                 col.addView(label("Couldn't write the quiz: $err", 15f, RED), lp(top = 8))
                 col.addView(button("Try again", ORANGE) { showQuiz(null) }, lp(top = 16))
-                if (p.claudeKey.isBlank()) {
-                    col.addView(label("Add your Claude API key in the Locked In app settings. Until then you'll do a written summary instead.", 14f, MUTED), lp(top = 12))
-                    col.addView(button("Write a summary instead", CARD) { showReflection() }, lp(top = 12))
-                }
+                col.addView(label("If it keeps failing you'll get a written summary instead after a few tries.", 14f, MUTED), lp(top = 12))
             }
             root.addView(scroll(col))
             return

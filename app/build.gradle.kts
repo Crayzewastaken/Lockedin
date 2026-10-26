@@ -13,11 +13,27 @@ android {
         applicationId = "com.lockedin.morning"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // A fixed signing key (from GitHub secrets) so new builds install over old ones.
+    val ksFile = rootProject.file("keystore.jks")
+    signingConfigs {
+        if (ksFile.exists()) {
+            create("fixed") {
+                storeFile = ksFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "lockedin"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (ksFile.exists()) signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
             // Signed with the debug key so the release APK installs without extra setup.

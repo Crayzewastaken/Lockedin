@@ -28,10 +28,10 @@ Your first unlock each morning opens a 30+ minute Alex Hormozi or Jeremy Miner v
 - Phone calls and alarms always work.
 
 **The quiz**
-- Claude writes 8 multiple-choice questions spread across the whole video, about specifics a person couldn't guess. It writes them in the background while you watch.
+- Gemini (free) writes 8 multiple-choice questions spread across the whole video, about specifics a person couldn't guess. It writes them in the background while you watch.
 - You have 5 minutes. The pass mark is 70%.
 - If you fail, it shows what you missed (with the timestamp) and gives you a brand-new quiz.
-- If a video has no usable transcript, or Claude can't be reached, you write a 250+ character summary of what you learned instead.
+- Gemini can watch the YouTube video directly when there's no transcript. If the AI can't be reached at all, you write a 250+ character summary of what you learned instead.
 
 **Safety valves**
 - **Emergency exit:** you type a long sentence to unlock. It's recorded in your history.
@@ -62,7 +62,7 @@ The settings screen shows your last 7 days: passed, skipped, how long your break
    5. Battery → Unrestricted
 
    **On Android 13 and newer**, steps 2 and 3 are greyed out ("Restricted setting") for apps installed outside the Play Store. To fix it: try step 2 once, go back, open App info (there's a button for it in the app), tap ⋮ in the top right, choose **Allow restricted settings**, then turn it on.
-3. Paste your **Claude API key**. Get one at console.anthropic.com → API Keys. It needs a little credit; each quiz costs a few cents.
+3. Paste your free **Gemini API key**: aistudio.google.com/apikey → Create API key. No card needed; the free tier easily covers one quiz a day. (A paid Claude key also works if you prefer.)
 4. Optional: add a **YouTube Data API key**. It's free from Google Cloud Console → enable "YouTube Data API v3" → Credentials. Without it, the app finds videos through YouTube search, which usually works but is less reliable.
 5. Tap **Start a session now (test)** to try it.
 

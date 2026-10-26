@@ -86,8 +86,9 @@ class MainActivity : Activity() {
         col.addView(enabledSw, lp(8))
         savers.add { p.enabled = enabledSw.isChecked }
 
-        textField(col, "Claude API key (for the quiz)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
-        textField(col, "Claude model", p.claudeModel) { p.claudeModel = it.trim() }
+        textField(col, "Gemini API key (free, for the quiz)", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
+        textField(col, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
+        textField(col, "Claude API key (optional, paid; only used if no Gemini key)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
         textField(col, "Channels (comma separated)", p.channels) { p.channels = it }
         textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
         textField(col, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
@@ -209,8 +210,8 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         }
-        if (p.claudeKey.isBlank()) {
-            permBox.addView(label("6. Add your Claude API key below (console.anthropic.com → API keys). Without it you'll write a summary instead of a quiz.", 13f, RED), lp(10))
+        if (!Quiz.hasProvider(p)) {
+            permBox.addView(label("6. Add your free Gemini API key below: aistudio.google.com/apikey → Create API key (no card needed). Without it you'll write a summary instead of a quiz.", 13f, RED), lp(10))
         }
     }
 
