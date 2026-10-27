@@ -78,6 +78,8 @@ class LockActivity : Activity() {
 
     private var picking = false
     private var quizGenRunning = false
+    private var quizStatus: TextView? = null
+    private var bgRetries = 0
     private var answering = false
     private var ticker: Runnable? = null
 
@@ -268,6 +270,10 @@ class LockActivity : Activity() {
         val emergency = label("Emergency exit", 12f, 0xFF8A8A90.toInt())
         emergency.setPadding(dp(12), dp(6), dp(4), dp(6))
         emergency.setOnClickListener { showEmergencyDialog() }
+        val qs = label("", 12f, 0xFF8A8A90.toInt())
+        qs.setPadding(dp(12), dp(6), dp(4), dp(6))
+        quizStatus = qs
+        top.addView(qs)
         top.addView(emergency)
         frame.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
@@ -317,7 +323,22 @@ class LockActivity : Activity() {
         wv.loadUrl("https://$PLAYER_HOST/player.html")
 
         // Start writing the quiz in the background while you watch.
-        if (p.quizJson.isEmpty() && Quiz.canQuiz(this, p)) ensureQuiz()
+        bgRetries = 0
+        if (p.quizJson.isEmpty() && Quiz.canQuiz(this, p)) ensureQuiz(background = true)
+        updateQuizStatus(null)
+    }
+
+    /** Small note in the top bar so you can see the quiz being written while you watch. */
+    private fun updateQuizStatus(err: String?) {
+        val v = quizStatus ?: return
+        v.text = when {
+            p.quizJson.isNotEmpty() -> "Quiz ready ✓"
+            !Quiz.canQuiz(this, p) -> "No quiz key: summary at end"
+            quizGenRunning -> "Writing quiz…"
+            err != null -> "Quiz failed, retrying…"
+            else -> ""
+        }
+        if (err != null) v.setOnClickListener { toast(err) } else v.setOnClickListener(null)
     }
 
     private val hideRunnable = Runnable { hideControls() }
@@ -531,8 +552,8 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
 
     private var quizGenToken = 0
 
-    private fun ensureQuiz() {
-        if (quizGenRunning) return
+    private fun ensureQuiz(background: Boolean = false) {
+        if (quizGenRunning || p.quizJson.isNotEmpty()) return
         quizGenRunning = true
         val token = ++quizGenToken
         io.execute {
@@ -546,9 +567,27 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
             ui.post {
                 if (token != quizGenToken) return@post // "Start over" was pressed; ignore this old attempt
                 quizGenRunning = false
-                if (json != null) p.quizJson = json else p.quizFails = p.quizFails + 1
-                if (!isFinishing && !isDestroyed && screen == Session.QUIZ && p.quizStartedAt == 0L) {
-                    showQuiz(err)
+                if (json != null) {
+                    p.quizJson = json
+                } else if (!background) {
+                    p.quizFails = p.quizFails + 1
+                }
+                if (isFinishing || isDestroyed) return@post
+                when (screen) {
+                    Session.VIDEO -> {
+                        updateQuizStatus(err)
+                        // Failed while you watch: quietly try again in a couple of minutes.
+                        if (json == null && bgRetries < 5) {
+                            bgRetries++
+                            ui.postDelayed({
+                                if (screen == Session.VIDEO && p.quizJson.isEmpty()) {
+                                    ensureQuiz(background = true)
+                                    updateQuizStatus(null)
+                                }
+                            }, 120_000L)
+                        }
+                    }
+                    Session.QUIZ -> if (p.quizStartedAt == 0L) showQuiz(err)
                 }
             }
         }
@@ -793,6 +832,7 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
         extBtn = null
         topBar = null
         bottomBar = null
+        quizStatus = null
         ui.removeCallbacks(hideRunnable)
         if (newScreen != Session.VIDEO) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         root.removeAllViews()
