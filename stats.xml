@@ -1,0 +1,4 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="json">{&quot;watch&quot;:{&quot;Alex Hormozi&quot;:16200,&quot;Jeremy Miner&quot;:9300},&quot;videosBy&quot;:{&quot;Alex Hormozi&quot;:6,&quot;Jeremy Miner&quot;:4},&quot;videosDone&quot;:10,&quot;quizAttempts&quot;:12,&quot;quizPasses&quot;:9,&quot;quizCorrect&quot;:74,&quot;quizQuestions&quot;:96,&quot;bestPct&quot;:100,&quot;scores&quot;:[50,62,75,88,62,100,75,88,50,88,100,75],&quot;pauses&quot;:23,&quot;rewinds&quot;:41,&quot;latestJumps&quot;:17,&quot;skipAttempts&quot;:3,&quot;breaks&quot;:5,&quot;breakMin&quot;:35,&quot;emergencies&quot;:1,&quot;summaries&quot;:2}</string>
+</map>

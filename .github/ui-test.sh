@@ -77,6 +77,40 @@ adb shell settings put system user_rotation 0
 sleep 4
 shot 4-portrait-again
 
+# ---- Settings + dashboard (no session running; Gemini on, OpenRouter + Claude off; sample stats)
+adb shell am force-stop $PKG
+cat > lockedin2.xml <<XML
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="active" value="false" />
+    <boolean name="useGemini" value="true" />
+    <boolean name="useOpenRouter" value="false" />
+    <boolean name="useClaude" value="false" />
+    <boolean name="useBuiltIn" value="true" />
+</map>
+XML
+cat > stats.xml <<'XML'
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="json">{&quot;watch&quot;:{&quot;Alex Hormozi&quot;:16200,&quot;Jeremy Miner&quot;:9300},&quot;videosBy&quot;:{&quot;Alex Hormozi&quot;:6,&quot;Jeremy Miner&quot;:4},&quot;videosDone&quot;:10,&quot;quizAttempts&quot;:12,&quot;quizPasses&quot;:9,&quot;quizCorrect&quot;:74,&quot;quizQuestions&quot;:96,&quot;bestPct&quot;:100,&quot;scores&quot;:[50,62,75,88,62,100,75,88,50,88,100,75],&quot;pauses&quot;:23,&quot;rewinds&quot;:41,&quot;latestJumps&quot;:17,&quot;skipAttempts&quot;:3,&quot;breaks&quot;:5,&quot;breakMin&quot;:35,&quot;emergencies&quot;:1,&quot;summaries&quot;:2}</string>
+</map>
+XML
+adb push lockedin2.xml /data/local/tmp/lockedin.xml
+adb push stats.xml /data/local/tmp/stats.xml
+adb shell cp /data/local/tmp/lockedin.xml /data/data/$PKG/shared_prefs/lockedin.xml
+adb shell cp /data/local/tmp/stats.xml /data/data/$PKG/shared_prefs/stats.xml
+adb shell chown -R $APPUID:$APPUID /data/data/$PKG/shared_prefs
+adb shell chmod 660 /data/data/$PKG/shared_prefs/stats.xml
+adb shell restorecon -R /data/data/$PKG/shared_prefs || true
+adb shell am start -n $PKG/.MainActivity
+sleep 4
+adb exec-out screencap -p > $OUT/5-main-top.png
+for i in 1 2 3 4 5; do
+  adb shell input swipe 540 1900 540 700 400
+  sleep 1
+  adb exec-out screencap -p > $OUT/6-main-scroll-$i.png
+done
+
 adb logcat -d > $OUT/logcat-full.txt
 grep -E "FATAL|AndroidRuntime|$PKG" $OUT/logcat-full.txt | head -200 > $OUT/logcat-app.txt
 adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" > $OUT/activity.txt

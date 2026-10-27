@@ -71,6 +71,7 @@ object Session {
         p.quizRound = 0
         p.quizPrevQs = ""
         p.active = true
+        Stats.inc(ctx, Stats.SESSIONS)
         launch(ctx, null)
     }
 

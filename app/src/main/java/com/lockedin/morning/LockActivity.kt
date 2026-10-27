@@ -67,6 +67,7 @@ class LockActivity : Activity() {
     private var lastCur = 0.0
     private var maxReached = 0.0
     private var seeking = false
+    private var triedSkip = false
     private var seekBar: SeekBar? = null
     private var latestBtn: Button? = null
     private var controlsShown = true
@@ -121,6 +122,7 @@ class LockActivity : Activity() {
     override fun onPause() {
         super.onPause()
         if (screen == Session.VIDEO) js("doPause()")
+        Stats.flush(this)
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -182,6 +184,7 @@ class LockActivity : Activity() {
         if ((p.pickError.isNotEmpty() && stuckFor > 20 * 60_000L) || brokenPlayer) {
             val why = if (brokenPlayer) "videos won't play" else "no internet"
             col.addView(button("Skip today ($why)", CARD) {
+                Stats.inc(this, Stats.SKIPPED_DAYS)
                 Session.finish(this, "Skipped ($why)", p.pickError)
                 showDone("Skipped today because no video could load. This is recorded in your history.")
             }, lp(top = 24))
@@ -300,16 +303,22 @@ class LockActivity : Activity() {
                 override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
                     if (!fromUser) return
                     // Can't drag past the furthest point you've actually watched.
-                    if (value > maxReached.toInt()) bar?.progress = maxReached.toInt()
+                    if (value > maxReached.toInt() + 2) {
+                        bar?.progress = maxReached.toInt()
+                        triedSkip = true
+                    }
                     progressText?.text = "Go to ${YouTube.clock(bar?.progress ?: value)}"
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) {
                     seeking = true
+                    triedSkip = false
                     ui.removeCallbacks(hideRunnable)
                 }
                 override fun onStopTrackingTouch(bar: SeekBar?) {
                     seeking = false
                     val to = (bar?.progress ?: 0).coerceAtMost(maxReached.toInt())
+                    if (triedSkip) Stats.inc(this@LockActivity, Stats.SKIP_ATTEMPTS)
+                    else if (to < lastCur - 2) Stats.inc(this@LockActivity, Stats.REWINDS)
                     lastCur = to.toDouble()
                     lastTickWall = 0L
                     js("seek($to)")
@@ -412,6 +421,7 @@ class LockActivity : Activity() {
     }
 
     private fun rewind(sec: Int) {
+        Stats.inc(this, Stats.REWINDS)
         val to = (lastCur - sec).coerceAtLeast(0.0)
         lastCur = to
         lastTickWall = 0L
@@ -422,6 +432,7 @@ class LockActivity : Activity() {
 
     /** Back to the furthest point you've watched (never further). */
     private fun jumpToLatest() {
+        Stats.inc(this, Stats.LATEST_JUMPS)
         val to = (maxReached - 1).coerceAtLeast(0.0)
         lastCur = to
         lastTickWall = 0L
@@ -492,6 +503,7 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         if (screen != Session.VIDEO) return
         val now = SystemClock.elapsedRealtime()
         if (state == 1) { // playing
+            if (lastTickWall > 0) Stats.addWatch(this, p.videoAuthor, ((now - lastTickWall) / 1000.0).coerceAtMost(2.0))
             val allowance = if (lastTickWall > 0) (now - lastTickWall) / 1000.0 * 1.25 + 1.0 else 3.0
             if (cur > maxReached && cur <= maxReached + allowance) maxReached = cur
             lastTickWall = now
@@ -532,11 +544,14 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         val d = p.videoDuration.coerceAtLeast(1)
         if (maxReached >= d * 0.95) {
             endedHandled = true
+            Stats.videoDone(this, p.videoAuthor)
+            Stats.flush(this)
             p.phase = Session.QUIZ
             p.quizStartedAt = 0L
             p.quizAnswers = ""
             showQuiz(null)
         } else {
+            Stats.inc(this, Stats.SKIP_ATTEMPTS)
             toast("You skipped ahead somehow. Going back to ${YouTube.clock(maxReached.toInt())}.")
             js("seek(${(maxReached - 3).toInt()})")
             js("doPlay()")
@@ -558,6 +573,7 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
 
     private fun togglePlay() {
         userPaused = !userPaused
+        if (userPaused) Stats.inc(this, Stats.PAUSES)
         if (userPaused) js("doPause()") else js("doPlay()")
         playBtn?.text = if (userPaused) "▶  Play" else "❚❚  Pause"
         showControls()
@@ -586,6 +602,8 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
 
     private fun startBreak(minutes: Int) {
         if (!Session.startExtension(p, minutes)) return
+        Stats.inc(this, Stats.BREAKS)
+        Stats.inc(this, Stats.BREAK_MIN, minutes)
         js("doPause()")
         toast("Break started: $minutes min. The video comes back automatically.")
         val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
@@ -787,6 +805,11 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         val score = qs.indices.count { answers.getOrNull(it) == qs[it].answer }
         val needed = ceil(p.passPercent * n / 100.0).toInt()
         val col = column(center = false)
+        val attemptKey = "${p.sessionDay}-${p.quizRound}-${p.quizStartedAt}"
+        if (p.sp.getString("statsQuizKey", "") != attemptKey) {
+            p.sp.edit().putString("statsQuizKey", attemptKey).apply()
+            Stats.quiz(this, score, n, score >= needed)
+        }
 
         if (score >= needed) {
             Session.finish(this, "Passed quiz $score/$n", p.videoTitle)
@@ -838,6 +861,7 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         val count = label("0 / $min", 13f, MUTED)
         col.addView(count, lp(top = 6))
         val submit = button("Submit", ORANGE) {
+            Stats.inc(this, Stats.SUMMARIES)
             Session.finish(this, "Wrote reflection", et.text.toString())
             showDone("Saved. Your phone is yours.")
         }
@@ -877,6 +901,7 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
             .setPositiveButton("Unlock") { _, _ ->
                 val typed = et.text.toString().trim().trimEnd('.').lowercase()
                 if (typed == EMERGENCY_PHRASE.lowercase()) {
+                    Stats.inc(this, Stats.EMERGENCIES)
                     Session.finish(this, "Emergency exit")
                     showDone("Unlocked. Tomorrow's session will run as normal.")
                 } else {

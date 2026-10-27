@@ -41,6 +41,8 @@ class MainActivity : Activity() {
 
     private lateinit var p: Prefs
     private lateinit var permBox: LinearLayout
+    private lateinit var dashBox: LinearLayout
+    private var permTitle: TextView? = null
     private lateinit var statusBox: LinearLayout
     private val savers = mutableListOf<() -> Unit>()
 
@@ -59,6 +61,7 @@ class MainActivity : Activity() {
         }
         refreshPerms()
         refreshStatus()
+        refreshDashboard()
     }
 
     private fun build() {
@@ -69,12 +72,17 @@ class MainActivity : Activity() {
         col.addView(label("Locked In", 30f, Color.WHITE, true))
         col.addView(label("Your first unlock each morning opens a 30+ minute Hormozi or Jeremy Miner video, then a quiz. Your phone is locked until you pass.", 15f, MUTED), lp(6))
 
+        dashBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(section("Dashboard"))
+        col.addView(dashBox)
+
         statusBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(section("Status"))
         col.addView(statusBox)
 
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(section("Setup (do these once)"))
+        permTitle = section("Setup (do these once)")
+        col.addView(permTitle)
         col.addView(permBox)
 
         col.addView(section("Settings"))
@@ -86,53 +94,33 @@ class MainActivity : Activity() {
         col.addView(enabledSw, lp(8))
         savers.add { p.enabled = enabledSw.isChecked }
 
-        col.addView(label("Quiz makers (tried top to bottom; switch off any you don't want)", 13f, MUTED), lp(14))
-        toggle(col, "Gemini", p.useGemini) { p.useGemini = it }
-        toggle(col, "OpenRouter", p.useOpenRouter) { p.useOpenRouter = it }
-        toggle(col, "Claude (paid)", p.useClaude) { p.useClaude = it }
-        toggle(col, "Built-in fill-in-the-blank (no AI)", p.useBuiltIn) { p.useBuiltIn = it }
-        textField(col, "Gemini API key (free, for the quiz)", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
-        textField(col, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
-        col.addView(button("Test Gemini key", CARD) {
-            savers.forEach { it() }
-            toast("Testing…")
-            Thread {
-                val result = try {
-                    val model = Quiz.testGemini(p)
-                    "✅ Working (model: $model). Quizzes are ready to go."
-                } catch (e: Exception) {
-                    "❌ ${e.message}"
-                }
-                runOnUiThread {
-                    if (!isFinishing) AlertDialog.Builder(this)
-                        .setTitle("Gemini test")
-                        .setMessage(result)
-                        .setPositiveButton("OK", null)
-                        .show()
-                }
-            }.start()
-        }, lp(8))
-        textField(col, "OpenRouter API key (free backup for the quiz)", p.openRouterKey, secret = true) { p.openRouterKey = it.trim() }
-        textField(col, "OpenRouter model", p.openRouterModel) { p.openRouterModel = it.trim() }
-        col.addView(button("Test OpenRouter key", CARD) {
-            savers.forEach { it() }
-            toast("Testing… (free models can take up to a minute)")
-            Thread {
-                val result = try {
-                    "✅ Working. It replied: ${Quiz.testOpenRouter(p)}"
-                } catch (e: Exception) {
-                    "❌ ${e.message}"
-                }
-                runOnUiThread {
-                    if (!isFinishing) AlertDialog.Builder(this)
-                        .setTitle("OpenRouter test")
-                        .setMessage(result)
-                        .setPositiveButton("OK", null)
-                        .show()
-                }
-            }.start()
-        }, lp(8))
-        textField(col, "Claude API key (optional, paid)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
+        col.addView(label("Quiz makers (tried top to bottom). Switch one off to hide its settings.", 13f, MUTED), lp(14))
+
+        // Gemini
+        val gemBox = providerBox(col, "Gemini (free)", p.useGemini) { p.useGemini = it }
+        textField(gemBox, "Gemini API key", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
+        textField(gemBox, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
+        testButton(gemBox, "Test Gemini key", "Gemini test", "Testing…") {
+            "✅ Working (model: ${Quiz.testGemini(p)}). Quizzes are ready to go."
+        }
+
+        // OpenRouter
+        val orBox = providerBox(col, "OpenRouter (free backup)", p.useOpenRouter) { p.useOpenRouter = it }
+        textField(orBox, "OpenRouter API key", p.openRouterKey, secret = true) { p.openRouterKey = it.trim() }
+        textField(orBox, "OpenRouter model", p.openRouterModel) { p.openRouterModel = it.trim() }
+        testButton(orBox, "Test OpenRouter key", "OpenRouter test", "Testing… (free models can take up to a minute)") {
+            "✅ Working. It replied: ${Quiz.testOpenRouter(p)}"
+        }
+
+        // Claude
+        val clBox = providerBox(col, "Claude (paid)", p.useClaude) { p.useClaude = it }
+        textField(clBox, "Claude API key", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
+        textField(clBox, "Claude model", p.claudeModel) { p.claudeModel = it.trim() }
+
+        // Built-in
+        providerBox(col, "Built-in fill-in-the-blank (no AI, no key)", p.useBuiltIn) { p.useBuiltIn = it }
+
+        col.addView(section("Videos & schedule"))
         textField(col, "Channels (comma separated)", p.channels) { p.channels = it }
         textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
         textField(col, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
@@ -189,6 +177,106 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ status
 
+    private fun refreshDashboard() {
+        dashBox.removeAllViews()
+        val st = Stats.load(this)
+        val watch = Stats.watchSeconds(this)
+        val total = watch.values.sum()
+        val vids = st.optJSONObject("videosBy")
+
+        // Watch time: overall + per channel
+        val big = card()
+        big.addView(label("Total watched", 13f, MUTED))
+        big.addView(label(Stats.hours(total), 34f, Color.WHITE, true))
+        val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (who in listOf("Alex Hormozi", "Jeremy Miner")) {
+            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            c.addView(label(who, 13f, MUTED))
+            c.addView(label(Stats.hours(watch[who] ?: 0.0), 22f, ORANGE, true))
+            c.addView(label("${vids?.optInt(who) ?: 0} videos finished", 12f, MUTED))
+            split.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        big.addView(split, lp(10))
+        if ((watch["Other"] ?: 0.0) > 60) big.addView(label("Other videos: ${Stats.hours(watch["Other"] ?: 0.0)}", 12f, MUTED), lp(6))
+        dashBox.addView(big, lp(8))
+
+        // Quizzes
+        val attempts = st.optInt(Stats.QUIZ_ATTEMPTS)
+        val qTotal = st.optInt(Stats.QUIZ_QUESTIONS)
+        val avg = if (qTotal > 0) st.optInt(Stats.QUIZ_CORRECT) * 100 / qTotal else 0
+        val quiz = card()
+        quiz.addView(label("Quizzes", 13f, MUTED))
+        val qRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun stat(row: LinearLayout, value: String, name: String) {
+            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            c.addView(label(value, 22f, Color.WHITE, true))
+            c.addView(label(name, 12f, MUTED))
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        stat(qRow, "${st.optInt(Stats.QUIZ_PASSES)}/$attempts", "passed")
+        stat(qRow, if (attempts > 0) "$avg%" else "–", "average")
+        stat(qRow, if (attempts > 0) "${st.optInt("bestPct")}%" else "–", "best")
+        stat(qRow, "${streak()}", "day streak")
+        quiz.addView(qRow, lp(6))
+        // last scores as little bars
+        val scores = st.optJSONArray("scores")
+        if (scores != null && scores.length() > 0) {
+            quiz.addView(label("Last ${minOf(scores.length(), 14)} scores", 12f, MUTED), lp(12))
+            val bars = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.BOTTOM
+            }
+            val from = maxOf(0, scores.length() - 14)
+            for (i in from until scores.length()) {
+                val pct = scores.optInt(i).coerceIn(0, 100)
+                val bar = android.view.View(this).apply {
+                    background = rounded(if (pct >= p.passPercent) GREEN else RED)
+                }
+                bars.addView(bar, LinearLayout.LayoutParams(0, dp(6) + dp(54) * pct / 100, 1f).apply { marginEnd = dp(4) })
+            }
+            quiz.addView(bars, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)).apply { topMargin = dp(4) })
+        }
+        quiz.addView(label("Written summaries: ${st.optInt(Stats.SUMMARIES)}", 12f, MUTED), lp(8))
+        dashBox.addView(quiz, lp(8))
+
+        // Habits while watching
+        val hab = card()
+        hab.addView(label("While watching", 13f, MUTED))
+        val r1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        stat(r1, "${st.optInt(Stats.PAUSES)}", "pauses")
+        stat(r1, "${st.optInt(Stats.REWINDS)}", "rewinds")
+        stat(r1, "${st.optInt(Stats.LATEST_JUMPS)}", "jumped to latest")
+        hab.addView(r1, lp(6))
+        val r2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        stat(r2, "${st.optInt(Stats.SKIP_ATTEMPTS)}", "tried to skip ahead")
+        stat(r2, "${st.optInt(Stats.BREAKS)} (${st.optInt(Stats.BREAK_MIN)}m)", "breaks")
+        stat(r2, "${st.optInt(Stats.EMERGENCIES)}", "emergency exits")
+        hab.addView(r2, lp(10))
+        if (st.optInt(Stats.SKIPPED_DAYS) > 0) hab.addView(label("Days skipped (video wouldn't load): ${st.optInt(Stats.SKIPPED_DAYS)}", 12f, MUTED), lp(8))
+        dashBox.addView(hab, lp(8))
+    }
+
+    /** Consecutive days (up to today/yesterday) that ended with a passed quiz or written summary. */
+    private fun streak(): Int {
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val good = Session.history(p)
+            .filter { val r = it.optString("result"); r.startsWith("Passed") || r.startsWith("Wrote") }
+            .mapNotNull { try { fmt.parse(it.optString("day"))?.time } catch (_: Exception) { null } }
+            .map { it / 86_400_000L }.toSortedSet()
+        if (good.isEmpty()) return 0
+        val today = (fmt.parse(Session.today())?.time ?: 0L) / 86_400_000L
+        var d = if (today in good) today else today - 1
+        var n = 0
+        while (d in good) { n++; d-- }
+        return n
+    }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        background = rounded(CARD)
+    }
+
     private fun refreshStatus() {
         statusBox.removeAllViews()
         val today = Session.today()
@@ -239,31 +327,35 @@ class MainActivity : Activity() {
             }, lp(6))
         }
 
-        permRow("1. Display over other apps", "Lets the lock open on top of whatever you're doing.", overlayOn) {
+        permRow("Display over other apps", "Lets the lock open on top of whatever you're doing.", overlayOn) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
-        permRow("2. Accessibility: Locked In", "Detects your unlock and brings the video back if you leave it. Settings → Accessibility → Locked In → On.", accessOn) {
+        permRow("Accessibility: Locked In", "Detects your unlock and brings the video back if you leave it. Settings → Accessibility → Locked In → On.", accessOn) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        permRow("3. Notification access", "Lets Messenger/SMS open only when a new message actually arrives.", notifOn) {
+        permRow("Notification access", "Lets Messenger/SMS open only when a new message actually arrives.", notifOn) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
-        permRow("4. Show notifications", "For the break countdown.", postOn) {
+        permRow("Show notifications", "For the break countdown.", postOn) {
             if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        permRow("5. Unrestricted battery", "Stops Android from killing the lock overnight.", batteryOn) {
+        permRow("Unrestricted battery", "Stops Android from killing the lock overnight.", batteryOn) {
             try {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             } catch (_: Exception) {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         }
-        if (!Quiz.hasProvider(p)) {
-            permBox.addView(label("6. Add a free quiz key below. Gemini: aistudio.google.com/apikey. Backup: openrouter.ai/keys. Without one you get a basic fill-in-the-blank quiz (or a written summary if the video has no transcript).", 13f, RED), lp(10))
+        if (!Quiz.hasProvider(p) && !p.useBuiltIn) {
+            permBox.addView(label("Switch on a quiz maker below (Gemini: aistudio.google.com/apikey, OpenRouter: openrouter.ai/keys) or the built-in quiz. Otherwise you'll write a summary instead.", 13f, RED), lp(10))
         }
+        val allDone = permBox.childCount == 0
+        permTitle?.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
+        permBox.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun permRow(title: String, hint: String, ok: Boolean, action: () -> Unit) {
+        if (ok) return // done steps disappear
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -302,6 +394,49 @@ class MainActivity : Activity() {
         }
         col.addView(et, lp(4))
         savers.add { save(et.text.toString()) }
+    }
+
+    /** A switch with a box under it that is only shown while the switch is on. */
+    private fun providerBox(col: LinearLayout, title: String, value: Boolean, save: (Boolean) -> Unit): LinearLayout {
+        val sw = Switch(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            isChecked = value
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        col.addView(sw, lp(12))
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, dp(4))
+            visibility = if (value) android.view.View.VISIBLE else android.view.View.GONE
+        }
+        col.addView(box, lp(0))
+        sw.setOnCheckedChangeListener { _, on ->
+            box.visibility = if (on) android.view.View.VISIBLE else android.view.View.GONE
+            save(on)
+            refreshPerms()
+        }
+        savers.add { save(sw.isChecked) }
+        return box
+    }
+
+    private fun testButton(box: LinearLayout, label: String, title: String, testing: String, run: () -> String) {
+        box.addView(button(label, CARD) {
+            savers.forEach { it() }
+            toast(testing)
+            Thread {
+                val result = try { run() } catch (e: Exception) { "❌ ${e.message}" }
+                runOnUiThread {
+                    if (!isFinishing) AlertDialog.Builder(this)
+                        .setTitle(title)
+                        .setMessage(result)
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }.start()
+        }, lp(8))
     }
 
     private fun toggle(col: LinearLayout, title: String, value: Boolean, save: (Boolean) -> Unit) {
