@@ -13,8 +13,10 @@ android {
         applicationId = "com.lockedin.morning"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.7"
+        // Build number from GitHub (matches the "build-N" release), so the app can tell when an update exists.
+        val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = 100 + run
+        versionName = "build-$run"
     }
 
     // A fixed signing key (from GitHub secrets) so new builds install over old ones.

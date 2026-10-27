@@ -158,6 +158,10 @@ class MainActivity : Activity() {
             refreshStatus()
         }, lp(20))
 
+        col.addView(button("Check for updates (you have build ${Updater.currentBuild(this)})", CARD) {
+            Updater.check(this)
+        }, lp(10))
+
         col.addView(button("Start a session now (test)", CARD) {
             AlertDialog.Builder(this)
                 .setTitle("Start now?")
