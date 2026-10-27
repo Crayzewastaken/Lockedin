@@ -5,68 +5,203 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Writes the quiz. Uses Google Gemini (free tier, no card) by default, or Claude if you
- * only set a Claude key. Gemini can also watch the YouTube video directly, so videos
- * without captions still get a real quiz.
+ * Writes the quiz. Tries, in order:
+ *  1. Gemini (free) — can also watch the YouTube video itself when there's no transcript
+ *  2. OpenRouter free models — from the transcript
+ *  3. Claude (paid, optional) — from the transcript
+ *  4. A built-in fill-in-the-blank quiz made from the transcript (no AI, always works)
  */
 object Quiz {
     data class Q(val q: String, val options: List<String>, val answer: Int, val explain: String, val at: String)
 
     private val GEMINI_FALLBACK_MODELS = listOf("gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-2.5-flash")
 
-    fun hasProvider(p: Prefs): Boolean = p.geminiKey.isNotBlank() || p.claudeKey.isNotBlank()
+    fun hasProvider(p: Prefs): Boolean =
+        p.geminiKey.isNotBlank() || p.openRouterKey.isNotBlank() || p.claudeKey.isNotBlank()
 
-    /** True if a real quiz is possible for the current video. */
+    /** True if some kind of quiz is possible for the current video. */
     fun canQuiz(ctx: Context, p: Prefs): Boolean =
-        p.geminiKey.isNotBlank() || (p.claudeKey.isNotBlank() && Session.readTranscript(ctx).isNotBlank())
+        p.geminiKey.isNotBlank() || Session.readTranscript(ctx).isNotBlank()
 
     fun generate(ctx: Context, p: Prefs): List<Q> {
-        if (!hasProvider(p)) throw Exception("Add your free Gemini API key in Locked In's settings")
         val transcript = Session.readTranscript(ctx)
-        val useGemini = p.geminiKey.isNotBlank()
-        if (!useGemini && transcript.isBlank()) throw Exception("No transcript for this video")
         val n = p.quizQuestions.coerceIn(3, 20)
-        val watchDirectly = useGemini && transcript.isBlank()
+        val errors = mutableListOf<String>()
 
-        val avoid = p.quizPrevQs.trim()
-        val prompt = buildString {
-            if (watchDirectly) {
-                append("Watch the attached YouTube video \"${p.videoTitle}\" by ${p.videoAuthor} in full.\n\n")
-            } else {
-                append("Below is the transcript of the YouTube video \"${p.videoTitle}\" by ${p.videoAuthor}. ")
-                append("Timestamps in [mm:ss] mark roughly every 30 seconds.\n\n")
-                append("<transcript>\n")
-                append(transcript.take(180_000))
-                append("\n</transcript>\n\n")
-            }
-            append("Write $n multiple-choice questions that check whether someone actually watched and understood this whole video.\n")
-            append("Rules:\n")
-            append("- Spread the questions evenly from the start to the end of the video (at least one from each quarter), in order.\n")
-            append("- Ask about specific frameworks, numbers, steps, examples, stories and pieces of advice from THIS video. ")
-            append("Never ask something a person could guess from general business knowledge or the title.\n")
-            append("- Each question has exactly 4 options and exactly one correct answer. Wrong options must be plausible and similar in length to the right one.\n")
-            append("- \"explain\" is one short sentence giving the lesson behind the right answer.\n")
-            append("- \"at\" is the mm:ss timestamp where the answer is discussed.\n")
-            if (avoid.isNotEmpty()) {
-                append("- Do NOT reuse or closely rephrase any of these earlier questions:\n")
-                append(avoid.take(6000))
-                append("\n")
-            }
-            append("\nReply with ONLY this JSON and nothing else:\n")
-            append("{\"questions\":[{\"q\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],\"answer\":0,\"explain\":\"...\",\"at\":\"12:34\"}]}")
+        fun attempt(name: String, call: () -> String): List<Q>? = try {
+            parseReply(call())
+        } catch (e: Exception) {
+            errors.add("$name: ${e.message}")
+            null
         }
 
-        val raw = if (useGemini) {
-            askGemini(p, prompt, if (watchDirectly) "https://www.youtube.com/watch?v=${p.videoId}" else null)
+        if (p.geminiKey.isNotBlank()) {
+            val watch = transcript.isBlank()
+            attempt("Gemini") {
+                askGemini(p, prompt(p, transcript, n, watch), if (watch) "https://www.youtube.com/watch?v=${p.videoId}" else null)
+            }?.let { return it }
+        }
+        if (transcript.isNotBlank()) {
+            if (p.openRouterKey.isNotBlank()) {
+                attempt("OpenRouter") { askOpenRouter(p, prompt(p, transcript, n, false)) }?.let { return it }
+            }
+            if (p.claudeKey.isNotBlank()) {
+                attempt("Claude") { askClaude(p, prompt(p, transcript, n, false)) }?.let { return it }
+            }
+            val local = builtIn(transcript, n)
+            if (local.size >= 3) return local
+            errors.add("Built-in quiz: transcript too short")
         } else {
-            askClaude(p, prompt)
+            errors.add("No transcript for this video, so only Gemini can quiz it")
         }
+        throw Exception(errors.joinToString("\n"))
+    }
+
+    private fun prompt(p: Prefs, transcript: String, n: Int, watchDirectly: Boolean): String = buildString {
+        if (watchDirectly) {
+            append("Watch the attached YouTube video \"${p.videoTitle}\" by ${p.videoAuthor} in full.\n\n")
+        } else {
+            append("Below is the transcript of the YouTube video \"${p.videoTitle}\" by ${p.videoAuthor}. ")
+            append("Timestamps in [mm:ss] mark roughly every 30 seconds.\n\n")
+            append("<transcript>\n")
+            append(transcript.take(180_000))
+            append("\n</transcript>\n\n")
+        }
+        append("Write $n multiple-choice questions that check whether someone actually watched and understood this whole video.\n")
+        append("Rules:\n")
+        append("- Spread the questions evenly from the start to the end of the video (at least one from each quarter), in order.\n")
+        append("- Ask about specific frameworks, numbers, steps, examples, stories and pieces of advice from THIS video. ")
+        append("Never ask something a person could guess from general business knowledge or the title.\n")
+        append("- Each question has exactly 4 options and exactly one correct answer. Wrong options must be plausible and similar in length to the right one.\n")
+        append("- \"explain\" is one short sentence giving the lesson behind the right answer.\n")
+        append("- \"at\" is the mm:ss timestamp where the answer is discussed.\n")
+        val avoid = p.quizPrevQs.trim()
+        if (avoid.isNotEmpty()) {
+            append("- Do NOT reuse or closely rephrase any of these earlier questions:\n")
+            append(avoid.take(6000))
+            append("\n")
+        }
+        append("\nReply with ONLY this JSON and nothing else:\n")
+        append("{\"questions\":[{\"q\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],\"answer\":0,\"explain\":\"...\",\"at\":\"12:34\"}]}")
+    }
+
+    private fun parseReply(raw: String): List<Q> {
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')
-        if (start < 0 || end <= start) throw Exception("The AI didn't return a quiz")
+        if (start < 0 || end <= start) throw Exception("didn't return a quiz")
         val qs = parse(JSONObject(raw.substring(start, end + 1)).optJSONArray("questions") ?: JSONArray())
-        if (qs.size < 3) throw Exception("Quiz came back too short")
+        if (qs.size < 3) throw Exception("quiz came back too short")
         return qs.map { shuffleOptions(it) }
+    }
+
+    // ------------------------------------------------------------------ OpenRouter
+
+    private fun askOpenRouter(p: Prefs, prompt: String): String {
+        val key = p.openRouterKey.trim()
+        val models = listOf(p.openRouterModel.trim(), "openrouter/free").filter { it.isNotEmpty() }.distinct()
+        var last: Exception? = null
+        for (model in models) {
+            // Free models are often busy: one quick retry per model.
+            for (tryNo in 0 until 2) {
+                try {
+                    val body = JSONObject()
+                        .put("model", model)
+                        .put("max_tokens", 6000)
+                        .put("messages", JSONArray()
+                            .put(JSONObject().put("role", "system").put("content", "You write sharp, fair comprehension quizzes for long talks. You output valid JSON only."))
+                            .put(JSONObject().put("role", "user").put("content", prompt)))
+                    val resp = Http.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        body.toString(),
+                        mapOf(
+                            "Authorization" to "Bearer $key",
+                            "Content-Type" to "application/json",
+                            "HTTP-Referer" to "https://github.com/Crayzewastaken/Lockedin",
+                            "X-Title" to "Locked In",
+                        ),
+                        timeoutSec = 150,
+                    )
+                    val j = JSONObject(resp)
+                    j.optJSONObject("error")?.let { throw Exception(it.optString("message", "error")) }
+                    val text = j.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: ""
+                    if (text.isNotBlank()) return text
+                    last = Exception("$model gave an empty reply")
+                } catch (e: Exception) {
+                    val msg = e.message ?: ""
+                    last = Exception("$model: ${friendly(msg)}")
+                    if (msg.contains("HTTP 401") || msg.contains("HTTP 403")) {
+                        throw Exception("your OpenRouter key was rejected. Copy it again from openrouter.ai/keys.")
+                    }
+                    if (msg.contains("HTTP 429") && tryNo == 0) Thread.sleep(8000)
+                }
+            }
+        }
+        throw last ?: Exception("failed")
+    }
+
+    fun testOpenRouter(p: Prefs): String {
+        if (p.openRouterKey.isBlank()) throw Exception("No OpenRouter key entered")
+        val raw = askOpenRouter(p, "Reply with just the word OK.")
+        return raw.trim().take(40)
+    }
+
+    // ------------------------------------------------------------------ built-in (no AI)
+
+    private val STOP = (
+        "about above after again against because been before being below between both could doing during each " +
+        "every further going gonna having here itself just know like little maybe more most much myself never " +
+        "other people really right said same should since some something still such than that their them then " +
+        "there these they thing things think this those though through today together under until very want wanna " +
+        "were what when where which while whole will with would your yours yourself actually basically literally " +
+        "anything everything nothing someone everyone because okay alright yeah kind sort pretty another around " +
+        "started saying called getting making looking talking trying gotten without within whatever whenever"
+        ).split(" ").toSet()
+
+    /** Fill-in-the-blank questions picked evenly across the transcript. */
+    fun builtIn(transcript: String, n: Int): List<Q> {
+        data class Seg(val at: String, val words: List<String>)
+        val segs = mutableListOf<Seg>()
+        val re = Regex("\\[([0-9:]+)\\]([^\\[]*)")
+        for (m in re.findAll(transcript)) {
+            val words = m.groupValues[2].replace(Regex("\\s+"), " ").trim().split(" ").filter { it.isNotBlank() }
+            if (words.size >= 15) segs.add(Seg(m.groupValues[1], words))
+        }
+        if (segs.size < 3) return emptyList()
+
+        fun clean(w: String) = w.lowercase().trim { !it.isLetterOrDigit() }
+        fun good(w: String): Boolean {
+            val c = clean(w)
+            return (c.length >= 6 && c.all { it.isLetter() } && c !in STOP) || (c.any { it.isDigit() } && c.length >= 2)
+        }
+
+        val pool = segs.flatMap { s -> s.words.map { clean(it) } }.filter { good(it) }.distinct()
+        if (pool.size < 8) return emptyList()
+
+        val out = mutableListOf<Q>()
+        val count = minOf(n, segs.size)
+        for (k in 0 until count) {
+            val seg = segs[((k + 0.5) * segs.size / count).toInt().coerceIn(0, segs.size - 1)]
+            val idxs = seg.words.indices.filter { it in 4 until seg.words.size - 3 && good(seg.words[it]) }
+            if (idxs.isEmpty()) continue
+            val i = idxs.maxByOrNull { clean(seg.words[it]).length + (if (clean(seg.words[it]).any { c -> c.isDigit() }) 10 else 0) }!!
+            val answer = clean(seg.words[i])
+            val from = (i - 12).coerceAtLeast(0)
+            val to = (i + 12).coerceAtMost(seg.words.size - 1)
+            val sentence = (from..to).joinToString(" ") { if (it == i) "_____" else seg.words[it] }
+            val isNum = answer.any { it.isDigit() }
+            val distractors = pool.filter { it != answer && it.any { c -> c.isDigit() } == isNum }
+                .sortedBy { kotlin.math.abs(it.length - answer.length) + Math.random() * 3 }
+                .take(3)
+            if (distractors.size < 3) continue
+            out.add(Q(
+                "Fill in the blank (at ${seg.at}):\n\"…$sentence…\"",
+                listOf(answer) + distractors,
+                0,
+                "The word was \"$answer\" (said at ${seg.at}).",
+                seg.at,
+            ))
+        }
+        return out.map { shuffleOptions(it) }
     }
 
     private fun askGemini(p: Prefs, prompt: String, youtubeUrl: String?): String {

@@ -333,7 +333,7 @@ class LockActivity : Activity() {
         val v = quizStatus ?: return
         v.text = when {
             p.quizJson.isNotEmpty() -> "Quiz ready ✓"
-            !Quiz.canQuiz(this, p) -> "No quiz key: summary at end"
+            !Quiz.canQuiz(this, p) -> "No transcript: summary at end"
             quizGenRunning -> "Writing quiz…"
             err != null -> "Quiz failed, retrying…"
             else -> ""

@@ -50,6 +50,8 @@ class Prefs(ctx: Context) {
     var enabled by bool(true)
     var geminiKey by str("")
     var geminiModel by str("gemini-3.8-flash")
+    var openRouterKey by str("")
+    var openRouterModel by str("openrouter/free")
     var claudeKey by str("")
     var claudeModel by str("claude-sonnet-5-5")
     var youtubeKey by str("")

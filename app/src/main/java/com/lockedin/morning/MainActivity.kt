@@ -107,7 +107,27 @@ class MainActivity : Activity() {
                 }
             }.start()
         }, lp(8))
-        textField(col, "Claude API key (optional, paid; only used if no Gemini key)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
+        textField(col, "OpenRouter API key (free backup for the quiz)", p.openRouterKey, secret = true) { p.openRouterKey = it.trim() }
+        textField(col, "OpenRouter model", p.openRouterModel) { p.openRouterModel = it.trim() }
+        col.addView(button("Test OpenRouter key", CARD) {
+            savers.forEach { it() }
+            toast("Testing… (free models can take up to a minute)")
+            Thread {
+                val result = try {
+                    "✅ Working. It replied: ${Quiz.testOpenRouter(p)}"
+                } catch (e: Exception) {
+                    "❌ ${e.message}"
+                }
+                runOnUiThread {
+                    if (!isFinishing) AlertDialog.Builder(this)
+                        .setTitle("OpenRouter test")
+                        .setMessage(result)
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }.start()
+        }, lp(8))
+        textField(col, "Claude API key (optional, paid)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
         textField(col, "Channels (comma separated)", p.channels) { p.channels = it }
         textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
         textField(col, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
@@ -230,7 +250,7 @@ class MainActivity : Activity() {
             }
         }
         if (!Quiz.hasProvider(p)) {
-            permBox.addView(label("6. Add your free Gemini API key below: aistudio.google.com/apikey → Create API key (no card needed). Without it you'll write a summary instead of a quiz.", 13f, RED), lp(10))
+            permBox.addView(label("6. Add a free quiz key below. Gemini: aistudio.google.com/apikey. Backup: openrouter.ai/keys. Without one you get a basic fill-in-the-blank quiz (or a written summary if the video has no transcript).", 13f, RED), lp(10))
         }
     }
 
