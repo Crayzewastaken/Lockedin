@@ -534,6 +534,8 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
 
     private fun handleError(code: Int) {
         if (screen != Session.VIDEO) return
+        // Only set by the automated layout test (YouTube blocks playback on test machines).
+        if (p.sp.getBoolean("uiTestMode", false)) return
         toast("This video can't play here (error $code). Picking another…")
         Session.markWatched(p, p.videoId) // so it isn't picked again
         p.playerErrors = p.playerErrors + 1

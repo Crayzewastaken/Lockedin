@@ -28,9 +28,10 @@ cat > lockedin.xml <<EOF
     <string name="videoTitle">Test video for layout check</string>
     <string name="videoAuthor">CI</string>
     <int name="videoDuration" value="2700" />
-    <int name="positionSec" value="1200" />
+    <int name="positionSec" value="300" />
     <int name="watchedSec" value="1200" />
     <boolean name="useBuiltIn" value="true" />
+    <boolean name="uiTestMode" value="true" />
 </map>
 EOF
 adb push lockedin.xml /data/local/tmp/lockedin.xml
