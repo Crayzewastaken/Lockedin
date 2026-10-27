@@ -88,6 +88,25 @@ class MainActivity : Activity() {
 
         textField(col, "Gemini API key (free, for the quiz)", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
         textField(col, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
+        col.addView(button("Test Gemini key", CARD) {
+            savers.forEach { it() }
+            toast("Testing…")
+            Thread {
+                val result = try {
+                    val model = Quiz.testGemini(p)
+                    "✅ Working (model: $model). Quizzes are ready to go."
+                } catch (e: Exception) {
+                    "❌ ${e.message}"
+                }
+                runOnUiThread {
+                    if (!isFinishing) AlertDialog.Builder(this)
+                        .setTitle("Gemini test")
+                        .setMessage(result)
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }.start()
+        }, lp(8))
         textField(col, "Claude API key (optional, paid; only used if no Gemini key)", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
         textField(col, "Channels (comma separated)", p.channels) { p.channels = it }
         textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }

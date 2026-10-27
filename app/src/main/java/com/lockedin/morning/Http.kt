@@ -36,7 +36,7 @@ object Http {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            if (code !in 200..299) throw IOException("HTTP $code: ${text.take(300)}")
+            if (code !in 200..299) throw IOException("HTTP $code: ${text.take(1500)}")
             return text
         } finally {
             conn.disconnect()

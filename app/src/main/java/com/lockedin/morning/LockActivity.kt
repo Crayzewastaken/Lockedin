@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -55,14 +56,19 @@ class LockActivity : Activity() {
     private lateinit var p: Prefs
     private lateinit var root: FrameLayout
     private val ui = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadExecutor()
+    private val io = Executors.newCachedThreadPool()
 
     private var screen = ""
     private var web: WebView? = null
     private var userPaused = false
     private var lastTickWall = 0L
     private var lastCur = 0.0
-    private var watchedAcc = 0.0
+    private var maxReached = 0.0
+    private var portraitMode = false
+    private var controlsShown = true
+    private var topBar: View? = null
+    private var bottomBar: View? = null
+    private var quizWaitStarted = 0L
     private var endedHandled = false
 
     private var progressText: TextView? = null
@@ -202,21 +208,20 @@ class LockActivity : Activity() {
 
     // ------------------------------------------------------------------ video
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun showVideo() {
         clear(Session.VIDEO)
-        watchedAcc = p.watchedSec.toDouble()
+        // Full screen, landscape (turn the phone either way). The rotate button switches to portrait.
+        requestedOrientation = if (portraitMode) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        maxReached = p.watchedSec.toDouble()
         lastCur = p.positionSec.toDouble()
         lastTickWall = 0L
         endedHandled = false
         userPaused = false // the player autoplays on load, so the button must start as "Pause"
 
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        val title = label("${p.videoTitle}  ·  ${p.videoAuthor}", 14f, Color.WHITE, bold = true)
-        title.maxLines = 2
-        title.setPadding(dp(16), dp(12), dp(16), dp(8))
-        layout.addView(title)
+        val frame = FrameLayout(this)
+        frame.setBackgroundColor(Color.BLACK)
 
         val wv = WebView(this)
         web = wv
@@ -225,7 +230,8 @@ class LockActivity : Activity() {
         wv.settings.domStorageEnabled = true
         wv.settings.mediaPlaybackRequiresUserGesture = false
         wv.webChromeClient = WebChromeClient()
-        val html = playerHtml(p.videoId, (p.positionSec - 3).coerceAtLeast(0))
+        val startAt = (minOf(p.positionSec, p.watchedSec) - 3).coerceAtLeast(0)
+        val html = playerHtml(p.videoId, startAt)
         wv.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 if (request?.url?.host == PLAYER_HOST) {
@@ -241,47 +247,101 @@ class LockActivity : Activity() {
             }
         }
         wv.addJavascriptInterface(Bridge(), "Android")
-        layout.addView(wv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        frame.addView(wv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // Bottom bar: play/pause · progress · break
-        val bar = LinearLayout(this).apply {
+        // Invisible layer over the video: blocks YouTube's own controls, tap = show/hide our controls.
+        val tapLayer = View(this)
+        tapLayer.setOnClickListener { if (controlsShown) hideControls() else showControls() }
+        frame.addView(tapLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        // ---- top bar: title · emergency exit
+        val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(4))
+            setPadding(dp(16), dp(10), dp(12), dp(18))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xCC000000.toInt(), 0x00000000))
         }
-        val pb = button(if (userPaused) "▶  Play" else "❚❚  Pause", ORANGE) { togglePlay() }
-        playBtn = pb
-        bar.addView(pb, LinearLayout.LayoutParams(dp(120), dp(52)))
+        val title = label("${p.videoTitle}  ·  ${p.videoAuthor}", 14f, Color.WHITE, bold = true)
+        title.maxLines = 1
+        title.ellipsize = android.text.TextUtils.TruncateAt.END
+        top.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val emergency = label("Emergency exit", 12f, 0xFF8A8A90.toInt())
+        emergency.setPadding(dp(12), dp(6), dp(4), dp(6))
+        emergency.setOnClickListener { showEmergencyDialog() }
+        top.addView(emergency)
+        frame.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
-        val mid = LinearLayout(this).apply {
+        // ---- bottom bar: progress, then  ⟲30 ⟲10 ▶/❚❚ · time · Break ⟳
+        val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(12), 0)
+            setPadding(dp(14), dp(24), dp(14), dp(10))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xDD000000.toInt(), 0x00000000))
         }
         val bar2 = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
         progressBar = bar2
-        mid.addView(bar2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)))
-        val pt = label("", 13f, MUTED)
+        bottom.addView(bar2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)))
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        val small = { t: String, f: () -> Unit -> button(t, 0x55FFFFFF, f).apply { textSize = 14f } }
+        row.addView(small("⟲ 30s") { rewind(30) }, LinearLayout.LayoutParams(dp(68), dp(44)).apply { marginEnd = dp(6) })
+        row.addView(small("⟲ 10s") { rewind(10) }, LinearLayout.LayoutParams(dp(68), dp(44)).apply { marginEnd = dp(6) })
+        val pb = button("❚❚  Pause", ORANGE) { togglePlay() }
+        playBtn = pb
+        row.addView(pb, LinearLayout.LayoutParams(dp(108), dp(44)))
+        val pt = label("", 13f, 0xFFDDDDDD.toInt())
+        pt.setPadding(dp(12), 0, dp(8), 0)
+        pt.maxLines = 2
         progressText = pt
-        mid.addView(pt)
-        bar.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val eb = button("Break", CARD) { showBreakDialog() }
+        row.addView(pt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val eb = button("Break", 0x55FFFFFF) { showBreakDialog() }
+        eb.textSize = 13f
         extBtn = eb
-        bar.addView(eb, LinearLayout.LayoutParams(dp(110), dp(52)))
-        layout.addView(bar)
+        row.addView(eb, LinearLayout.LayoutParams(dp(96), dp(44)).apply { marginEnd = dp(6) })
+        row.addView(small("⟳") {
+            portraitMode = !portraitMode
+            requestedOrientation = if (portraitMode) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            showControls()
+        }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        bottom.addView(row)
+        frame.addView(bottom, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
-        val emergency = label("Emergency exit", 12f, 0xFF66666C.toInt())
-        emergency.gravity = Gravity.CENTER
-        emergency.setPadding(0, dp(4), 0, dp(10))
-        emergency.setOnClickListener { showEmergencyDialog() }
-        layout.addView(emergency)
-
-        root.addView(layout, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        topBar = top
+        bottomBar = bottom
+        root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         updateProgressUi()
+        showControls()
         wv.loadUrl("https://$PLAYER_HOST/player.html")
 
         // Start writing the quiz in the background while you watch.
         if (p.quizJson.isEmpty() && Quiz.canQuiz(this, p)) ensureQuiz()
+    }
+
+    private val hideRunnable = Runnable { hideControls() }
+
+    private fun showControls() {
+        controlsShown = true
+        topBar?.animate()?.alpha(1f)?.setDuration(150)?.start()
+        bottomBar?.animate()?.alpha(1f)?.setDuration(150)?.start()
+        topBar?.visibility = View.VISIBLE
+        bottomBar?.visibility = View.VISIBLE
+        ui.removeCallbacks(hideRunnable)
+        if (!userPaused) ui.postDelayed(hideRunnable, 4000)
+    }
+
+    private fun hideControls() {
+        if (userPaused) return
+        controlsShown = false
+        topBar?.visibility = View.GONE
+        bottomBar?.visibility = View.GONE
+    }
+
+    private fun rewind(sec: Int) {
+        js("back($sec)")
+        showControls()
     }
 
     private fun playerHtml(videoId: String, start: Int): String = """
@@ -316,7 +376,8 @@ setInterval(function(){
 },1000);
 function doPlay(){ if(ready&&player) player.playVideo(); }
 function doPause(){ if(ready&&player) player.pauseVideo(); }
-function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo(); } }
+function back(s){ if(ready&&player){ player.seekTo(Math.max(0, player.getCurrentTime()-s), true); } }
+function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); player.playVideo(); } }
 </script></body></html>
 """.trimIndent()
 
@@ -337,16 +398,17 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
         }
     }
 
+    /**
+     * "Watched" = the furthest point you've reached by actually playing the video.
+     * Rewinding is free; playing back over old ground doesn't add anything, and the frontier
+     * can only move forward at normal playing speed, so there's no way to skip ahead.
+     */
     private fun handleTick(cur: Double, dur: Double, state: Int) {
         if (screen != Session.VIDEO) return
         val now = SystemClock.elapsedRealtime()
         if (state == 1) { // playing
-            if (lastTickWall > 0) {
-                val wall = (now - lastTickWall) / 1000.0
-                val adv = cur - lastCur
-                // Only count real, normal-speed forward progress.
-                if (adv > 0 && adv <= wall * 1.25 + 0.5 && adv < 5) watchedAcc += adv
-            }
+            val allowance = if (lastTickWall > 0) (now - lastTickWall) / 1000.0 * 1.25 + 1.0 else 3.0
+            if (cur > maxReached && cur <= maxReached + allowance) maxReached = cur
             lastTickWall = now
         } else {
             lastTickWall = 0L
@@ -354,32 +416,37 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
         lastCur = cur
         if (dur > 0 && dur.toInt() != p.videoDuration) p.videoDuration = dur.toInt()
         p.positionSec = cur.toInt()
-        p.watchedSec = watchedAcc.toInt()
+        p.watchedSec = maxReached.toInt()
         updateProgressUi()
     }
 
     private fun updateProgressUi() {
         val d = p.videoDuration.coerceAtLeast(1)
-        progressBar?.progress = ((watchedAcc / d) * 1000).toInt().coerceIn(0, 1000)
-        val left = (d - watchedAcc.toInt()).coerceAtLeast(0)
-        progressText?.text = "Watched ${YouTube.clock(watchedAcc.toInt())} of ${YouTube.clock(d)} · ${YouTube.clock(left)} to go"
+        progressBar?.progress = ((maxReached / d) * 1000).toInt().coerceIn(0, 1000)
+        val left = (d - maxReached.toInt()).coerceAtLeast(0)
+        val behind = (maxReached - lastCur).toInt()
+        progressText?.text = if (behind > 5) {
+            "Rewound ${YouTube.clock(behind)} · catching up to ${YouTube.clock(maxReached.toInt())}"
+        } else {
+            "${YouTube.clock(maxReached.toInt())} / ${YouTube.clock(d)} · ${YouTube.clock(left)} left"
+        }
         val m = Session.extMinutesLeft(p)
         val u = Session.extUsesLeft(p)
-        extBtn?.text = if (m >= 5 && u > 0) "Break\n$m min left" else "No breaks\nleft"
+        extBtn?.text = if (m >= 5 && u > 0) "Break ($m)" else "No breaks"
     }
 
     private fun handleEnded() {
         if (screen != Session.VIDEO || endedHandled) return
         val d = p.videoDuration.coerceAtLeast(1)
-        if (watchedAcc >= d * 0.85) {
+        if (maxReached >= d * 0.95) {
             endedHandled = true
             p.phase = Session.QUIZ
             p.quizStartedAt = 0L
             p.quizAnswers = ""
             showQuiz(null)
         } else {
-            toast("Parts of the video weren't counted as watched. Starting it again.")
-            js("restart()")
+            toast("You skipped ahead somehow. Going back to ${YouTube.clock(maxReached.toInt())}.")
+            js("seekTo(${(maxReached - 3).toInt()})")
         }
     }
 
@@ -398,6 +465,7 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
         userPaused = !userPaused
         if (userPaused) js("doPause()") else js("doPlay()")
         playBtn?.text = if (userPaused) "▶  Play" else "❚❚  Pause"
+        showControls()
     }
 
     private fun js(code: String) {
@@ -461,21 +529,25 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
 
     // ------------------------------------------------------------------ quiz
 
+    private var quizGenToken = 0
+
     private fun ensureQuiz() {
         if (quizGenRunning) return
         quizGenRunning = true
+        val token = ++quizGenToken
         io.execute {
             var err: String? = null
+            var json: String? = null
             try {
-                val qs = Quiz.generate(this, p)
-                p.quizJson = Quiz.toJson(qs)
+                json = Quiz.toJson(Quiz.generate(this, p))
             } catch (e: Exception) {
                 err = e.message ?: e.javaClass.simpleName
-                p.quizFails = p.quizFails + 1
             }
             ui.post {
+                if (token != quizGenToken) return@post // "Start over" was pressed; ignore this old attempt
                 quizGenRunning = false
-                if (!isFinishing && !isDestroyed && screen == Session.QUIZ && (err != null || p.quizStartedAt == 0L)) {
+                if (json != null) p.quizJson = json else p.quizFails = p.quizFails + 1
+                if (!isFinishing && !isDestroyed && screen == Session.QUIZ && p.quizStartedAt == 0L) {
                     showQuiz(err)
                 }
             }
@@ -491,14 +563,40 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
         if (p.quizJson.isEmpty()) {
             val col = column()
             col.addView(label("Nice. Video done.", 28f, Color.WHITE, bold = true))
+            val escape = button("Skip the quiz → write a summary instead", CARD) { showReflection() }
             if (err == null) {
+                if (quizWaitStarted == 0L) quizWaitStarted = SystemClock.elapsedRealtime()
                 col.addView(label("Writing your quiz…", 16f, MUTED), lp(top = 8))
                 col.addView(ProgressBar(this).apply { isIndeterminate = true }, lp(top = 16))
+                val waited = label("", 13f, MUTED)
+                col.addView(waited, lp(top = 8))
+                val retry = button("Start over", ORANGE) {
+                    quizWaitStarted = 0L
+                    quizGenToken++
+                    quizGenRunning = false
+                    showQuiz(null)
+                }
+                retry.visibility = View.GONE
+                escape.visibility = View.GONE
+                col.addView(retry, lp(top = 20))
+                col.addView(escape, lp(top = 10))
                 ensureQuiz()
+                val r = object : Runnable {
+                    override fun run() {
+                        val sec = ((SystemClock.elapsedRealtime() - quizWaitStarted) / 1000).toInt()
+                        waited.text = "${sec}s"
+                        if (sec >= 25) { retry.visibility = View.VISIBLE; escape.visibility = View.VISIBLE }
+                        ui.postDelayed(this, 1000)
+                    }
+                }
+                ticker = r
+                ui.post(r)
             } else {
-                col.addView(label("Couldn't write the quiz: $err", 15f, RED), lp(top = 8))
+                quizWaitStarted = 0L
+                col.addView(label("Couldn't write the quiz:", 15f, RED, bold = true), lp(top = 8))
+                col.addView(label(err, 14f, RED).apply { setTextIsSelectable(true) }, lp(top = 4))
                 col.addView(button("Try again", ORANGE) { showQuiz(null) }, lp(top = 16))
-                col.addView(label("If it keeps failing you'll get a written summary instead after a few tries.", 14f, MUTED), lp(top = 12))
+                col.addView(escape, lp(top = 10))
             }
             root.addView(scroll(col))
             return
@@ -693,6 +791,10 @@ function restart(){ if(ready&&player){ player.seekTo(0,true); player.playVideo()
         progressText = null
         playBtn = null
         extBtn = null
+        topBar = null
+        bottomBar = null
+        ui.removeCallbacks(hideRunnable)
+        if (newScreen != Session.VIDEO) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         root.removeAllViews()
         screen = newScreen
     }

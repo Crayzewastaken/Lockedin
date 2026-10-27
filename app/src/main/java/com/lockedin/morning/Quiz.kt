@@ -12,7 +12,7 @@ import org.json.JSONObject
 object Quiz {
     data class Q(val q: String, val options: List<String>, val answer: Int, val explain: String, val at: String)
 
-    private val GEMINI_FALLBACK_MODELS = listOf("gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash")
+    private val GEMINI_FALLBACK_MODELS = listOf("gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-2.5-flash")
 
     fun hasProvider(p: Prefs): Boolean = p.geminiKey.isNotBlank() || p.claudeKey.isNotBlank()
 
@@ -71,38 +71,127 @@ object Quiz {
 
     private fun askGemini(p: Prefs, prompt: String, youtubeUrl: String?): String {
         val parts = JSONArray()
-        if (youtubeUrl != null) parts.put(JSONObject().put("file_data", JSONObject().put("file_uri", youtubeUrl)))
+        if (youtubeUrl != null) {
+            // Low frame rate + low resolution: a 60-min talk fits comfortably in the free tier.
+            parts.put(
+                JSONObject()
+                    .put("fileData", JSONObject().put("fileUri", youtubeUrl))
+                    .put("videoMetadata", JSONObject().put("fps", 0.1))
+            )
+        }
         parts.put(JSONObject().put("text", prompt))
+        val gen = JSONObject().put("responseMimeType", "application/json")
+        if (youtubeUrl != null) gen.put("mediaResolution", "MEDIA_RESOLUTION_LOW")
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
-            .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
+            .put("generationConfig", gen)
             .toString()
+        return callGemini(p, body, timeoutSec = 150)
+    }
 
-        val chosen = p.geminiModel.trim()
-        val models = (listOf(chosen) + GEMINI_FALLBACK_MODELS).filter { it.isNotEmpty() }.distinct()
+    /** Quick check used by the "Test Gemini key" button. Returns the model that worked. */
+    fun testGemini(p: Prefs): String {
+        if (p.geminiKey.isBlank()) throw Exception("No Gemini key entered")
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject().put("role", "user")
+                .put("parts", JSONArray().put(JSONObject().put("text", "Reply with just the word OK.")))))
+            .toString()
+        callGemini(p, body, timeoutSec = 40)
+        return p.sp.getString("gemini_working_model", "") ?: ""
+    }
+
+    /** Tries your chosen model, then whatever Flash models your key can use. */
+    private fun callGemini(p: Prefs, body: String, timeoutSec: Int): String {
+        val key = p.geminiKey.trim()
+        val remembered = p.sp.getString("gemini_working_model", "") ?: ""
+        val models = (listOf(p.geminiModel.trim(), remembered) + GEMINI_FALLBACK_MODELS)
+            .filter { it.isNotEmpty() }.distinct().toMutableList()
+        var listed = false
         var lastErr: Exception? = null
-        for (model in models) {
+        var i = 0
+        while (i < models.size && i < 8) {
+            val model = models[i++]
             try {
                 val resp = Http.post(
                     "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent",
                     body,
-                    mapOf("x-goog-api-key" to p.geminiKey.trim(), "Content-Type" to "application/json"),
-                    timeoutSec = 240,
+                    mapOf("x-goog-api-key" to key, "Content-Type" to "application/json"),
+                    timeoutSec = timeoutSec,
                 )
-                val cands = JSONObject(resp).optJSONArray("candidates") ?: throw Exception("Empty reply from Gemini")
+                val j = JSONObject(resp)
+                val cand = j.optJSONArray("candidates")?.optJSONObject(0)
+                val rParts = cand?.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
                 val out = StringBuilder()
-                val rParts = cands.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
-                for (i in 0 until rParts.length()) out.append(rParts.optJSONObject(i)?.optString("text") ?: "")
-                if (out.isNotBlank()) return out.toString()
-                lastErr = Exception("Empty reply from Gemini")
+                for (k in 0 until rParts.length()) {
+                    val part = rParts.optJSONObject(k) ?: continue
+                    if (!part.optBoolean("thought", false)) out.append(part.optString("text"))
+                }
+                if (out.isNotBlank()) {
+                    p.sp.edit().putString("gemini_working_model", model).apply()
+                    return out.toString()
+                }
+                val why = cand?.optString("finishReason")?.takeIf { it.isNotEmpty() }
+                    ?: j.optJSONObject("promptFeedback")?.optString("blockReason")
+                    ?: "no text"
+                lastErr = Exception("Gemini ($model) gave an empty reply: $why")
             } catch (e: Exception) {
-                lastErr = e
                 val msg = e.message ?: ""
-                // Only try the next model if this one doesn't exist / isn't allowed.
-                if (!(msg.contains("HTTP 404") || msg.contains("HTTP 400") && msg.contains("model"))) break
+                val err = Exception("Gemini ($model): ${friendly(msg)}")
+                lastErr = err
+                val code = Regex("HTTP (\\d+)").find(msg)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                when {
+                    code == 401 || code == 403 && !msg.contains("model", true) ->
+                        throw Exception("Your Gemini key was rejected. Check it in settings (copy it again from aistudio.google.com/apikey).")
+                    code == 404 || code == 429 || code == 400 && msg.contains("model", true) || code >= 500 -> {
+                        // This model isn't available / out of free quota: try another one.
+                        if (!listed) {
+                            listed = true
+                            try { models.addAll(listFlashModels(key).filter { it !in models }) } catch (_: Exception) {}
+                        }
+                    }
+                    code == 400 && msg.contains("token", true) ->
+                        throw Exception("This video is too long for the free Gemini quiz.")
+                    else -> throw err
+                }
             }
         }
         throw lastErr ?: Exception("Gemini failed")
+    }
+
+    /** Asks Google which Flash models this key can use, newest first. */
+    private fun listFlashModels(key: String): List<String> {
+        val resp = Http.get(
+            "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+            mapOf("x-goog-api-key" to key),
+            timeoutSec = 20,
+        )
+        val arr = JSONObject(resp).optJSONArray("models") ?: return emptyList()
+        val bad = listOf("image", "tts", "audio", "live", "embedding", "vision", "exp", "thinking", "native")
+        val names = mutableListOf<String>()
+        for (k in 0 until arr.length()) {
+            val m = arr.optJSONObject(k) ?: continue
+            val name = m.optString("name").removePrefix("models/")
+            val methods = m.optJSONArray("supportedGenerationMethods")?.toString() ?: ""
+            if (!methods.contains("generateContent")) continue
+            if (!name.contains("flash") || bad.any { name.contains(it) }) continue
+            names.add(name)
+        }
+        fun ver(n: String) = Regex("gemini-(\\d+(?:\\.\\d+)?)").find(n)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
+        return names.sortedWith(compareByDescending<String> { ver(it) }
+            .thenBy { if (it.contains("lite")) 1 else 0 }
+            .thenBy { if (it.contains("preview")) 1 else 0 }).take(5)
+    }
+
+    private fun friendly(msg: String): String {
+        val code = Regex("HTTP (\\d+)").find(msg)?.groupValues?.get(1) ?: ""
+        val inner = try {
+            JSONObject(msg.substringAfter(": ", "")).optJSONObject("error")?.optString("message")
+        } catch (_: Exception) { null }
+        val text = inner?.takeIf { it.isNotBlank() } ?: msg
+        return when (code) {
+            "429" -> "free quota used up for now (${text.take(140)})"
+            else -> text.take(220)
+        }
     }
 
     private fun askClaude(p: Prefs, prompt: String): String {
