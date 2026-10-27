@@ -49,6 +49,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         p = Prefs(this)
+        // One-time: the old default stopped new locks at 1pm; with work hours it can run in the evening too.
+        if (!p.sp.getBoolean("migratedWorkHours", false)) {
+            if (p.windowEndHour == 13) p.windowEndHour = 22
+            p.sp.edit().putBoolean("migratedWorkHours", true).apply()
+        }
         build()
     }
 
@@ -128,6 +133,14 @@ class MainActivity : Activity() {
         intField(col, "Longest video (minutes)", p.maxMinutes) { p.maxMinutes = it.coerceAtLeast(p.minMinutes) }
         intField(col, "Lock can start from (hour, 0–23)", p.windowStartHour) { p.windowStartHour = it.coerceIn(0, 23) }
         intField(col, "No new lock after (hour, 1–24)", p.windowEndHour) { p.windowEndHour = it.coerceIn(1, 24) }
+        val workBox = providerBox(col, "Never lock during work hours", p.workEnabled) { p.workEnabled = it }
+        textField(workBox, "Work starts (e.g. 8:30am)", Session.hhmm(p.workStartMin)) { v ->
+            Session.parseHhmm(v)?.let { p.workStartMin = it } ?: toast("Couldn't read work start time \"$v\"")
+        }
+        textField(workBox, "Work ends (e.g. 4:30pm)", Session.hhmm(p.workEndMin)) { v ->
+            Session.parseHhmm(v)?.let { p.workEndMin = it } ?: toast("Couldn't read work end time \"$v\"")
+        }
+        toggle(workBox, "Weekdays only (Mon–Fri)", p.workWeekdaysOnly) { p.workWeekdaysOnly = it }
         intField(col, "Wait if an alarm is due within (minutes)", p.alarmBufferMin) { p.alarmBufferMin = it.coerceAtLeast(0) }
         intField(col, "Quiz questions", p.quizQuestions) { p.quizQuestions = it.coerceIn(3, 20) }
         intField(col, "Quiz time limit (seconds)", p.quizSeconds) { p.quizSeconds = it.coerceIn(60, 1800) }
@@ -151,6 +164,10 @@ class MainActivity : Activity() {
         }, lp(10))
 
         col.addView(button("Start a session now (test)", CARD) {
+            if (Session.inWorkHours(p)) {
+                toast("It's work hours right now, so the lock won't run.")
+                return@button
+            }
             AlertDialog.Builder(this)
                 .setTitle("Start now?")
                 .setMessage("This locks your phone into today's video and quiz right away, exactly like the morning lock. Breaks and the emergency exit work as normal.")
@@ -290,6 +307,10 @@ class MainActivity : Activity() {
         val nextText = if (next == null) "No alarm set" else
             "Next alarm: " + SimpleDateFormat("EEE h:mm a", Locale.getDefault()).format(Date(next.triggerTime))
         statusBox.addView(label("$nextText · lock window ${p.windowStartHour}:00–${p.windowEndHour}:00", 14f, MUTED), lp(4))
+        if (p.workEnabled) statusBox.addView(label(
+            "No lock during work: ${Session.hhmm(p.workStartMin)}–${Session.hhmm(p.workEndMin)}" +
+                (if (p.workWeekdaysOnly) ", Mon–Fri" else ", every day") +
+                (if (Session.inWorkHours(p)) " (work hours now)" else ""), 14f, MUTED), lp(2))
 
         val hist = Session.history(p).takeLast(7).reversed()
         if (hist.isNotEmpty()) {

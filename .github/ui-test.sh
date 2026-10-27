@@ -32,6 +32,7 @@ cat > lockedin.xml <<EOF
     <int name="watchedSec" value="1200" />
     <boolean name="useBuiltIn" value="true" />
     <boolean name="uiTestMode" value="true" />
+    <boolean name="workEnabled" value="false" />
 </map>
 EOF
 adb push lockedin.xml /data/local/tmp/lockedin.xml

@@ -46,6 +46,9 @@ import kotlin.math.ceil
 class LockActivity : Activity() {
 
     companion object {
+        @Volatile
+        var current: LockActivity? = null
+
         private const val ORANGE = 0xFFFF7A1A.toInt()
         private const val GREEN = 0xFF2E9E5B.toInt()
         private const val RED = 0xFFD64545.toInt()
@@ -90,8 +93,21 @@ class LockActivity : Activity() {
 
     // ------------------------------------------------------------------ lifecycle
 
+    /** Work hours started: save your place and get out of the way. */
+    fun leaveForWork() {
+        if (isFinishing) return
+        if (screen == Session.VIDEO) {
+            js("doPause()")
+            p.watchedSec = maxReached.toInt()
+        }
+        Stats.flush(this)
+        Toast.makeText(this, "Work hours: Locked In is paused. It picks up where you left off after ${Session.hhmm(p.workEndMin)}.", Toast.LENGTH_LONG).show()
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = this
         p = Prefs(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         root = FrameLayout(this)
@@ -144,6 +160,7 @@ class LockActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (current === this) current = null
         stopTicker()
         destroyWeb()
         ui.removeCallbacksAndMessages(null)
@@ -153,6 +170,7 @@ class LockActivity : Activity() {
 
     private fun screenKey(): String = when {
         !p.active -> "none"
+        Session.inWorkHours(p) -> "work"
         Session.inExtension(p) -> "ext"
         p.phase.isEmpty() -> Session.PICKING
         else -> p.phase
@@ -162,6 +180,7 @@ class LockActivity : Activity() {
         val key = screenKey()
         when (key) {
             "none" -> { if (screen != "done") finish(); return }
+            "work" -> { leaveForWork(); return }
             "ext" -> showExtension()
             Session.VIDEO -> showVideo()
             Session.QUIZ -> showQuiz(null)

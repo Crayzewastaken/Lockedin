@@ -160,6 +160,11 @@ class EnforcerService : AccessibilityService() {
     private fun enforce() {
         val p = Prefs(this)
         if (!p.active || locked()) return
+        if (Session.inWorkHours(p)) {
+            // Work hours: hands off. The session carries on after work.
+            LockActivity.current?.leaveForWork()
+            return
+        }
         val pkg = currentPkg
         val now = System.currentTimeMillis()
 

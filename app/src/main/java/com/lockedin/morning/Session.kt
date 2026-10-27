@@ -39,6 +39,35 @@ object Session {
         return diff > 0 && diff <= p.alarmBufferMin * 60_000L
     }
 
+    /** True during your work hours: no lock at all (an active session waits until after). */
+    fun inWorkHours(p: Prefs): Boolean {
+        if (!p.workEnabled) return false
+        val c = Calendar.getInstance()
+        val dow = c.get(Calendar.DAY_OF_WEEK)
+        if (p.workWeekdaysOnly && (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY)) return false
+        val m = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+        return m >= p.workStartMin && m < p.workEndMin
+    }
+
+    fun hhmm(min: Int): String {
+        val h = min / 60
+        val m = min % 60
+        val ampm = if (h < 12) "am" else "pm"
+        val h12 = if (h % 12 == 0) 12 else h % 12
+        return if (m == 0) "$h12$ampm" else String.format("%d:%02d%s", h12, m, ampm)
+    }
+
+    fun parseHhmm(s: String): Int? {
+        val m = Regex("^\\s*(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\s*$", RegexOption.IGNORE_CASE).find(s) ?: return null
+        var h = m.groupValues[1].toInt()
+        val mi = m.groupValues[2].ifEmpty { "0" }.toInt()
+        val ap = m.groupValues[3].lowercase()
+        if (ap == "pm" && h < 12) h += 12
+        if (ap == "am" && h == 12) h = 0
+        if (h > 23 || mi > 59) return null
+        return h * 60 + mi
+    }
+
     fun shouldStart(ctx: Context): Boolean {
         checkStale(ctx)
         val p = Prefs(ctx)
@@ -47,6 +76,7 @@ object Session {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         if (hour < p.windowStartHour || hour >= p.windowEndHour) return false
         if (alarmSoon(ctx, p)) return false
+        if (inWorkHours(p)) return false
         return true
     }
 
