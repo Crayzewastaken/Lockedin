@@ -13,6 +13,7 @@ adb install -r -g LockedIn.apk
 adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
 adb shell settings put system accelerometer_rotation 0
+adb shell settings put secure immersive_mode_confirmations confirmed
 adb shell settings put system user_rotation 0
 adb shell wm size > $OUT/wm-size.txt
 
@@ -23,7 +24,7 @@ cat > lockedin.xml <<EOF
     <boolean name="active" value="true" />
     <string name="phase">VIDEO</string>
     <string name="sessionDay">$TODAY</string>
-    <string name="videoId">9hE5-98ZeCg</string>
+    <string name="videoId">aqz-KE-bpKQ</string>
     <string name="videoTitle">Test video for layout check</string>
     <string name="videoAuthor">CI</string>
     <int name="videoDuration" value="2700" />
@@ -58,6 +59,9 @@ shot() {
 
 # Portrait
 shot 1-portrait
+# Rewind 10s twice so the "furthest" marker and Latest button show
+SIZE=$(adb shell wm size | grep -oE "[0-9]+x[0-9]+" | tail -1)
+shot 1b-portrait-controls
 # Pause (controls stay up), rewind a bit, screenshot showing the "furthest" marker
 adb shell input keyevent KEYCODE_WAKEUP
 sleep 1
