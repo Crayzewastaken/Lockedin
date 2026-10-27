@@ -2,6 +2,7 @@ name: Build APK
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -46,3 +47,48 @@ jobs:
             --title "Locked In (build ${{ github.run_number }})" \
             --notes "Download LockedIn.apk below and open it on your Android phone." \
             --latest
+
+  # Runs the app on an Android emulator and screenshots the video player upright and sideways.
+  # Screenshots are pushed to the "ui-screens" branch.
+  ui-test:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LockedIn-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash .github/ui-test.sh
+
+      - name: Push screenshots
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p screens
+          cd screens
+          echo "${{ github.sha }}" > commit.txt
+          git init -q -b ui-screens
+          git config user.name "github-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "UI screenshots for ${{ github.sha }}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:ui-screens

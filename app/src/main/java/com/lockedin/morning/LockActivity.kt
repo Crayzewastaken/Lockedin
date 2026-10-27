@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -34,6 +35,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayInputStream
@@ -64,7 +66,9 @@ class LockActivity : Activity() {
     private var lastTickWall = 0L
     private var lastCur = 0.0
     private var maxReached = 0.0
-    private var portraitMode = false
+    private var seeking = false
+    private var seekBar: SeekBar? = null
+    private var latestBtn: Button? = null
     private var controlsShown = true
     private var topBar: View? = null
     private var bottomBar: View? = null
@@ -213,9 +217,8 @@ class LockActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun showVideo() {
         clear(Session.VIDEO)
-        // Full screen, landscape (turn the phone either way). The rotate button switches to portrait.
-        requestedOrientation = if (portraitMode) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // Full screen; follows your phone's normal auto-rotate.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         maxReached = p.watchedSec.toDouble()
         lastCur = p.positionSec.toDouble()
         lastTickWall = 0L
@@ -277,43 +280,80 @@ class LockActivity : Activity() {
         top.addView(emergency)
         frame.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
-        // ---- bottom bar: progress, then  ⟲30 ⟲10 ▶/❚❚ · time · Break ⟳
+        // ---- bottom bar (two rows so it fits upright and sideways):
+        //   [ seek bar — can only be dragged up to the furthest point you've watched ]
+        //   time text
+        //   [ ⟲ 10s ] [ ❚❚ Pause ] [ Latest ⏭ ] [ Break ]
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(24), dp(14), dp(10))
-            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xDD000000.toInt(), 0x00000000))
+            setPadding(dp(12), dp(28), dp(12), dp(12))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xE6000000.toInt(), 0x00000000))
         }
-        val bar2 = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
-        progressBar = bar2
-        bottom.addView(bar2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)))
+        val sb = SeekBar(this).apply {
+            max = p.videoDuration.coerceAtLeast(1)
+            progressTintList = ColorStateList.valueOf(ORANGE)
+            thumbTintList = ColorStateList.valueOf(ORANGE)
+            secondaryProgressTintList = ColorStateList.valueOf(0x99FFFFFF.toInt())
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    // Can't drag past the furthest point you've actually watched.
+                    if (value > maxReached.toInt()) bar?.progress = maxReached.toInt()
+                    progressText?.text = "Go to ${YouTube.clock(bar?.progress ?: value)}"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {
+                    seeking = true
+                    ui.removeCallbacks(hideRunnable)
+                }
+                override fun onStopTrackingTouch(bar: SeekBar?) {
+                    seeking = false
+                    val to = (bar?.progress ?: 0).coerceAtMost(maxReached.toInt())
+                    lastCur = to.toDouble()
+                    lastTickWall = 0L
+                    js("seek($to)")
+                    showControls()
+                }
+            })
+        }
+        seekBar = sb
+        bottom.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)))
+        val pt = label("", 13f, 0xFFDDDDDD.toInt())
+        pt.setPadding(dp(4), 0, dp(4), dp(6))
+        pt.maxLines = 1
+        progressText = pt
+        bottom.addView(pt)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
         }
-        val small = { t: String, f: () -> Unit -> button(t, 0x55FFFFFF, f).apply { textSize = 14f } }
-        row.addView(small("⟲ 30s") { rewind(30) }, LinearLayout.LayoutParams(dp(68), dp(44)).apply { marginEnd = dp(6) })
-        row.addView(small("⟲ 10s") { rewind(10) }, LinearLayout.LayoutParams(dp(68), dp(44)).apply { marginEnd = dp(6) })
-        val pb = button("❚❚  Pause", ORANGE) { togglePlay() }
+        fun cell(b: Button, gap: Boolean = true) {
+            b.textSize = 14f
+            b.maxLines = 1
+            b.setPadding(dp(4), 0, dp(4), 0)
+            row.addView(b, LinearLayout.LayoutParams(0, dp(46), 1f).apply { if (gap) marginEnd = dp(6) })
+        }
+        cell(button("⟲ 10s", 0x55FFFFFF) { rewind(10) })
+        val pb = button("❚❚ Pause", ORANGE) { togglePlay() }
         playBtn = pb
-        row.addView(pb, LinearLayout.LayoutParams(dp(108), dp(44)))
-        val pt = label("", 13f, 0xFFDDDDDD.toInt())
-        pt.setPadding(dp(12), 0, dp(8), 0)
-        pt.maxLines = 2
-        progressText = pt
-        row.addView(pt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        cell(pb)
+        val lb = button("Latest ⏭", 0x55FFFFFF) { jumpToLatest() }
+        latestBtn = lb
+        cell(lb)
         val eb = button("Break", 0x55FFFFFF) { showBreakDialog() }
-        eb.textSize = 13f
         extBtn = eb
-        row.addView(eb, LinearLayout.LayoutParams(dp(96), dp(44)).apply { marginEnd = dp(6) })
-        row.addView(small("⟳") {
-            portraitMode = !portraitMode
-            requestedOrientation = if (portraitMode) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            showControls()
-        }, LinearLayout.LayoutParams(dp(48), dp(44)))
+        cell(eb, gap = false)
         bottom.addView(row)
         frame.addView(bottom, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+
+        // Keep the controls clear of camera cut-outs and rounded corners.
+        frame.setOnApplyWindowInsetsListener { _, insets ->
+            val cut = insets.displayCutout
+            val l = cut?.safeInsetLeft ?: 0
+            val r = cut?.safeInsetRight ?: 0
+            top.setPadding(dp(16) + l, dp(10) + (cut?.safeInsetTop ?: 0), dp(12) + r, dp(18))
+            bottom.setPadding(dp(12) + l, dp(28), dp(12) + r, dp(12) + (cut?.safeInsetBottom ?: 0))
+            insets
+        }
 
         topBar = top
         bottomBar = bottom
@@ -361,7 +401,21 @@ class LockActivity : Activity() {
     }
 
     private fun rewind(sec: Int) {
-        js("back($sec)")
+        val to = (lastCur - sec).coerceAtLeast(0.0)
+        lastCur = to
+        lastTickWall = 0L
+        js("seek(${to.toInt()})")
+        updateProgressUi()
+        showControls()
+    }
+
+    /** Back to the furthest point you've watched (never further). */
+    private fun jumpToLatest() {
+        val to = (maxReached - 1).coerceAtLeast(0.0)
+        lastCur = to
+        lastTickWall = 0L
+        js("seek(${to.toInt()})")
+        updateProgressUi()
         showControls()
     }
 
@@ -397,8 +451,7 @@ setInterval(function(){
 },1000);
 function doPlay(){ if(ready&&player) player.playVideo(); }
 function doPause(){ if(ready&&player) player.pauseVideo(); }
-function back(s){ if(ready&&player){ player.seekTo(Math.max(0, player.getCurrentTime()-s), true); } }
-function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); player.playVideo(); } }
+function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
 </script></body></html>
 """.trimIndent()
 
@@ -443,13 +496,20 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
 
     private fun updateProgressUi() {
         val d = p.videoDuration.coerceAtLeast(1)
-        progressBar?.progress = ((maxReached / d) * 1000).toInt().coerceIn(0, 1000)
-        val left = (d - maxReached.toInt()).coerceAtLeast(0)
-        val behind = (maxReached - lastCur).toInt()
-        progressText?.text = if (behind > 5) {
-            "Rewound ${YouTube.clock(behind)} · catching up to ${YouTube.clock(maxReached.toInt())}"
-        } else {
-            "${YouTube.clock(maxReached.toInt())} / ${YouTube.clock(d)} · ${YouTube.clock(left)} left"
+        val furthest = maxReached.toInt()
+        seekBar?.let {
+            if (it.max != d) it.max = d
+            it.secondaryProgress = furthest
+            if (!seeking) it.progress = lastCur.toInt().coerceAtMost(furthest)
+        }
+        if (!seeking) {
+            val behind = furthest - lastCur.toInt()
+            progressText?.text = if (behind > 5) {
+                "${YouTube.clock(lastCur.toInt())} · furthest ${YouTube.clock(furthest)} / ${YouTube.clock(d)}"
+            } else {
+                "${YouTube.clock(furthest)} / ${YouTube.clock(d)} · ${YouTube.clock((d - furthest).coerceAtLeast(0))} left"
+            }
+            latestBtn?.alpha = if (behind > 5) 1f else 0.4f
         }
         val m = Session.extMinutesLeft(p)
         val u = Session.extUsesLeft(p)
@@ -467,7 +527,8 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
             showQuiz(null)
         } else {
             toast("You skipped ahead somehow. Going back to ${YouTube.clock(maxReached.toInt())}.")
-            js("seekTo(${(maxReached - 3).toInt()})")
+            js("seek(${(maxReached - 3).toInt()})")
+            js("doPlay()")
         }
     }
 
@@ -827,6 +888,9 @@ function seekTo(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); playe
         stopTicker()
         destroyWeb()
         progressBar = null
+        seekBar = null
+        latestBtn = null
+        seeking = false
         progressText = null
         playBtn = null
         extBtn = null
