@@ -54,12 +54,6 @@ shot() {
   adb exec-out screencap -p > $OUT/$1.png
   # and one without tapping (controls should appear by themselves right after rotating)
 }
-  ROT=$(adb shell dumpsys input | grep -m1 -oE 'SurfaceOrientation: [0-9]' | grep -oE '[0-9]$')
-  if [ "$ROT" = "1" ] || [ "$ROT" = "3" ]; then T=$W; W=$H; H=$T; fi
-  adb shell input tap $((W/2)) $((H/2))
-  sleep 1.5
-  adb exec-out screencap -p > $OUT/$1.png
-}
 
 # Portrait
 shot 1-portrait
