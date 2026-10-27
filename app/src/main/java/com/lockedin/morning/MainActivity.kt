@@ -321,7 +321,7 @@ class MainActivity : Activity() {
         val batteryOn = getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) == true
 
         if (Build.VERSION.SDK_INT >= 33 && (!accessOn || !notifOn)) {
-            permBox.addView(label("Android blocks steps 2 and 3 for apps installed outside the Play Store until you allow it: tap below → ⋮ menu (top right) → \"Allow restricted settings\". If you don't see that option, try step 2 first, then come back.", 13f, MUTED), lp(8))
+            permBox.addView(label("Android blocks Accessibility and Notification access for apps installed outside the Play Store until you allow it: tap below → ⋮ menu (top right) → \"Allow restricted settings\". If you don't see that option, try Accessibility first, then come back."Allow restricted settings\". If you don't see that option, try step 2 first, then come back.", 13f, MUTED), lp(8))
             permBox.addView(button("Open app info (allow restricted settings)", CARD) {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }, lp(6))
