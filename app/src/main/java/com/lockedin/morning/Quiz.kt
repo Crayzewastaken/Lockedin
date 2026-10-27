@@ -221,7 +221,7 @@ object Quiz {
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
             .put("generationConfig", gen)
             .toString()
-        return callGemini(p, body, timeoutSec = 150)
+        return callGemini(p, body, timeoutSec = 120)
     }
 
     /** Quick check used by the "Test Gemini key" button. Returns the model that worked. */
@@ -231,7 +231,7 @@ object Quiz {
             .put("contents", JSONArray().put(JSONObject().put("role", "user")
                 .put("parts", JSONArray().put(JSONObject().put("text", "Reply with just the word OK.")))))
             .toString()
-        callGemini(p, body, timeoutSec = 40)
+        callGemini(p, body, timeoutSec = 45)
         return p.sp.getString("gemini_working_model", "") ?: ""
     }
 
@@ -239,19 +239,23 @@ object Quiz {
     private fun callGemini(p: Prefs, body: String, timeoutSec: Int): String {
         val key = p.geminiKey.trim()
         val remembered = p.sp.getString("gemini_working_model", "") ?: ""
-        val models = (listOf(p.geminiModel.trim(), remembered) + GEMINI_FALLBACK_MODELS)
+        val models = (listOf(remembered, p.geminiModel.trim()) + GEMINI_FALLBACK_MODELS)
             .filter { it.isNotEmpty() }.distinct().toMutableList()
         var listed = false
         var lastErr: Exception? = null
         var i = 0
+        // Overall time limit across all models, so a slow Gemini can't hang things.
+        val giveUpAt = System.currentTimeMillis() + timeoutSec * 2500L
         while (i < models.size && i < 8) {
+            val left = ((giveUpAt - System.currentTimeMillis()) / 1000).toInt()
+            if (left < 10) break
             val model = models[i++]
             try {
                 val resp = Http.post(
                     "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent",
                     body,
                     mapOf("x-goog-api-key" to key, "Content-Type" to "application/json"),
-                    timeoutSec = timeoutSec,
+                    timeoutSec = minOf(timeoutSec, left),
                 )
                 val j = JSONObject(resp)
                 val cand = j.optJSONArray("candidates")?.optJSONObject(0)
@@ -271,10 +275,18 @@ object Quiz {
                 lastErr = Exception("Gemini ($model) gave an empty reply: $why")
             } catch (e: Exception) {
                 val msg = e.message ?: ""
-                val err = Exception("Gemini ($model): ${friendly(msg)}")
+                val timedOut = e is java.net.SocketTimeoutException || msg.contains("timed out", true) || msg.contains("timeout", true)
+                val err = Exception(
+                    if (timedOut) "Gemini ($model) didn't answer in time" else "Gemini ($model): ${friendly(msg)}"
+                )
                 lastErr = err
                 val code = Regex("HTTP (\\d+)").find(msg)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 when {
+                    timedOut -> {
+                        // Busy/slow model: try a lighter, faster one next.
+                        listOf("gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite")
+                            .filter { it !in models }.reversed().forEach { models.add(i, it) }
+                    }
                     code == 401 || code == 403 && !msg.contains("model", true) ->
                         throw Exception("Your Gemini key was rejected. Check it in settings (copy it again from aistudio.google.com/apikey).")
                     code == 404 || code == 429 || code == 400 && msg.contains("model", true) || code >= 500 -> {
