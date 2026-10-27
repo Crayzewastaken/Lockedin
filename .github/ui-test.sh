@@ -48,9 +48,12 @@ adb shell am start -n $PKG/.LockActivity
 sleep 20
 
 shot() {
-  # tap the middle to show the controls, then capture
-  SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
-  W=${SIZE%x*}; H=${SIZE#*x}
+  # tap near the top-left of the video area (valid both upright and sideways) to show controls
+  adb shell input tap 500 450
+  sleep 1.5
+  adb exec-out screencap -p > $OUT/$1.png
+  # and one without tapping (controls should appear by themselves right after rotating)
+}
   ROT=$(adb shell dumpsys input | grep -m1 -oE 'SurfaceOrientation: [0-9]' | grep -oE '[0-9]$')
   if [ "$ROT" = "1" ] || [ "$ROT" = "3" ]; then T=$W; W=$H; H=$T; fi
   adb shell input tap $((W/2)) $((H/2))
@@ -69,6 +72,8 @@ sleep 1
 
 # Landscape
 adb shell settings put system user_rotation 1
+sleep 2
+adb exec-out screencap -p > $OUT/2a-landscape-just-rotated.png
 sleep 4
 shot 2-landscape
 adb shell settings put system user_rotation 3

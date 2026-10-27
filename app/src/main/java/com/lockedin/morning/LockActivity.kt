@@ -123,6 +123,12 @@ class LockActivity : Activity() {
         if (screen == Session.VIDEO) js("doPause()")
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        hideBars()
+        if (screen == Session.VIDEO) showControls()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideBars()
@@ -273,10 +279,6 @@ class LockActivity : Activity() {
         val emergency = label("Emergency exit", 12f, 0xFF8A8A90.toInt())
         emergency.setPadding(dp(12), dp(6), dp(4), dp(6))
         emergency.setOnClickListener { showEmergencyDialog() }
-        val qs = label("", 12f, 0xFF8A8A90.toInt())
-        qs.setPadding(dp(12), dp(6), dp(4), dp(6))
-        quizStatus = qs
-        top.addView(qs)
         top.addView(emergency)
         frame.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
@@ -317,11 +319,20 @@ class LockActivity : Activity() {
         }
         seekBar = sb
         bottom.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)))
+        val timeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), 0, dp(4), dp(6))
+        }
         val pt = label("", 13f, 0xFFDDDDDD.toInt())
-        pt.setPadding(dp(4), 0, dp(4), dp(6))
         pt.maxLines = 1
         progressText = pt
-        bottom.addView(pt)
+        timeRow.addView(pt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val qs = label("", 12f, 0xFF9A9AA0.toInt())
+        qs.maxLines = 1
+        qs.setPadding(dp(8), 0, 0, 0)
+        quizStatus = qs
+        timeRow.addView(qs)
+        bottom.addView(timeRow)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -373,7 +384,7 @@ class LockActivity : Activity() {
         val v = quizStatus ?: return
         v.text = when {
             p.quizJson.isNotEmpty() -> "Quiz ready ✓"
-            !Quiz.canQuiz(this, p) -> "No transcript: summary at end"
+            !Quiz.canQuiz(this, p) -> "Summary at end"
             quizGenRunning -> "Writing quiz…"
             err != null -> "Quiz failed, retrying…"
             else -> ""
