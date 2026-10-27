@@ -86,6 +86,11 @@ class MainActivity : Activity() {
         col.addView(enabledSw, lp(8))
         savers.add { p.enabled = enabledSw.isChecked }
 
+        col.addView(label("Quiz makers (tried top to bottom; switch off any you don't want)", 13f, MUTED), lp(14))
+        toggle(col, "Gemini", p.useGemini) { p.useGemini = it }
+        toggle(col, "OpenRouter", p.useOpenRouter) { p.useOpenRouter = it }
+        toggle(col, "Claude (paid)", p.useClaude) { p.useClaude = it }
+        toggle(col, "Built-in fill-in-the-blank (no AI)", p.useBuiltIn) { p.useBuiltIn = it }
         textField(col, "Gemini API key (free, for the quiz)", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
         textField(col, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
         col.addView(button("Test Gemini key", CARD) {
@@ -293,6 +298,18 @@ class MainActivity : Activity() {
         }
         col.addView(et, lp(4))
         savers.add { save(et.text.toString()) }
+    }
+
+    private fun toggle(col: LinearLayout, title: String, value: Boolean, save: (Boolean) -> Unit) {
+        val sw = Switch(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            isChecked = value
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        col.addView(sw, lp(4))
+        savers.add { save(sw.isChecked) }
     }
 
     private fun intField(col: LinearLayout, title: String, value: Int, save: (Int) -> Unit) {

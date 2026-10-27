@@ -13,8 +13,8 @@ android {
         applicationId = "com.lockedin.morning"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
     }
 
     // A fixed signing key (from GitHub secrets) so new builds install over old ones.

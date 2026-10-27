@@ -16,12 +16,18 @@ object Quiz {
 
     private val GEMINI_FALLBACK_MODELS = listOf("gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-2.5-flash")
 
-    fun hasProvider(p: Prefs): Boolean =
-        p.geminiKey.isNotBlank() || p.openRouterKey.isNotBlank() || p.claudeKey.isNotBlank()
+    private fun gemini(p: Prefs) = p.useGemini && p.geminiKey.isNotBlank()
+    private fun openRouter(p: Prefs) = p.useOpenRouter && p.openRouterKey.isNotBlank()
+    private fun claude(p: Prefs) = p.useClaude && p.claudeKey.isNotBlank()
+
+    fun hasProvider(p: Prefs): Boolean = gemini(p) || openRouter(p) || claude(p)
 
     /** True if some kind of quiz is possible for the current video. */
-    fun canQuiz(ctx: Context, p: Prefs): Boolean =
-        p.geminiKey.isNotBlank() || Session.readTranscript(ctx).isNotBlank()
+    fun canQuiz(ctx: Context, p: Prefs): Boolean {
+        if (gemini(p)) return true
+        if (Session.readTranscript(ctx).isBlank()) return false
+        return openRouter(p) || claude(p) || p.useBuiltIn
+    }
 
     fun generate(ctx: Context, p: Prefs): List<Q> {
         val transcript = Session.readTranscript(ctx)
@@ -35,25 +41,28 @@ object Quiz {
             null
         }
 
-        if (p.geminiKey.isNotBlank()) {
+        if (gemini(p)) {
             val watch = transcript.isBlank()
             attempt("Gemini") {
                 askGemini(p, prompt(p, transcript, n, watch), if (watch) "https://www.youtube.com/watch?v=${p.videoId}" else null)
             }?.let { return it }
         }
         if (transcript.isNotBlank()) {
-            if (p.openRouterKey.isNotBlank()) {
+            if (openRouter(p)) {
                 attempt("OpenRouter") { askOpenRouter(p, prompt(p, transcript, n, false)) }?.let { return it }
             }
-            if (p.claudeKey.isNotBlank()) {
+            if (claude(p)) {
                 attempt("Claude") { askClaude(p, prompt(p, transcript, n, false)) }?.let { return it }
             }
-            val local = builtIn(transcript, n)
-            if (local.size >= 3) return local
-            errors.add("Built-in quiz: transcript too short")
+            if (p.useBuiltIn) {
+                val local = builtIn(transcript, n)
+                if (local.size >= 3) return local
+                errors.add("Built-in quiz: transcript too short")
+            }
         } else {
-            errors.add("No transcript for this video, so only Gemini can quiz it")
+            errors.add("No transcript for this video, so only Gemini (if switched on) can quiz it")
         }
+        if (errors.isEmpty()) errors.add("All quiz makers are switched off in settings")
         throw Exception(errors.joinToString("\n"))
     }
 
