@@ -32,6 +32,7 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     companion object {
+        private const val FIELD = 0xFF2C2C30.toInt()
         private const val ORANGE = 0xFFFF7A1A.toInt()
         private const val CARD = 0xFF1C1C1E.toInt()
         private const val MUTED = 0xFFA0A0A8.toInt()
@@ -66,74 +67,108 @@ class MainActivity : Activity() {
         }
         refreshPerms()
         refreshStatus()
+        refreshSummary()
         refreshDashboard()
     }
 
+    // ------------------------------------------------------------------ layout: home + settings
+
+    private lateinit var homeView: ScrollView
+    private lateinit var settingsView: ScrollView
+    private lateinit var summaryBox: LinearLayout
+    private lateinit var detailWrap: LinearLayout
+    private lateinit var histBox: LinearLayout
+    private lateinit var moreLink: TextView
+    private var inSettings = false
+    private val summaries = mutableListOf<() -> Unit>()
+
     private fun build() {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(32), dp(20), dp(40))
-        }
-        col.addView(label("Locked In", 30f, Color.WHITE, true))
-        col.addView(label("Your first unlock each morning: pick a 30+ minute video from your YouTubers, watch it, then a quiz. Your phone is locked until you pass.", 15f, MUTED), lp(6))
+        // ---------------- HOME: today, setup (if needed), your numbers
+        val home = column()
+        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        topRow.addView(label("Locked In", 30f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        topRow.addView(pill("⚙  Settings") { openSettings() })
+        home.addView(topRow)
 
-        dashBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(section("Dashboard"))
-        col.addView(dashBox)
-
-        statusBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(section("Status"))
-        col.addView(statusBox)
+        statusBox = card()
+        home.addView(statusBox, lp(20))
 
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        permTitle = section("Setup (do these once)")
-        col.addView(permTitle)
-        col.addView(permBox)
+        permTitle = label("Finish setup", 18f, ORANGE, true).apply { setPadding(0, dp(24), 0, 0) }
+        home.addView(permTitle)
+        home.addView(permBox)
 
-        col.addView(section("Settings"))
+        home.addView(label("Your progress", 18f, Color.WHITE, true).apply { setPadding(0, dp(28), 0, 0) })
+        summaryBox = card()
+        home.addView(summaryBox, lp(10))
+
+        moreLink = label("See all stats  ▾", 15f, ORANGE, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, dp(6))
+            setOnClickListener {
+                val open = detailWrap.visibility != android.view.View.VISIBLE
+                detailWrap.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+                text = if (open) "Hide stats  ▴" else "See all stats  ▾"
+            }
+        }
+        home.addView(moreLink)
+        detailWrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
+        dashBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        histBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        detailWrap.addView(dashBox)
+        detailWrap.addView(histBox)
+        home.addView(detailWrap)
+
+        home.addView(button("Start a session now", CARD) { confirmStart() }, lp(28))
+        home.addView(label("Check for updates  ·  build ${Updater.currentBuild(this)}", 13f, MUTED).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(16), 0, dp(8))
+            setOnClickListener { Updater.check(this@MainActivity) }
+        })
+        homeView = scrollOf(home)
+
+        // ---------------- SETTINGS: one tidy group per topic, collapsed
+        val set = column()
+        val back = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        back.addView(label("‹  Back", 17f, ORANGE, true).apply {
+            setPadding(0, dp(4), dp(16), dp(4))
+            setOnClickListener { closeSettings() }
+        })
+        set.addView(back)
+        set.addView(label("Settings", 30f, Color.WHITE, true), lp(8))
+        set.addView(label("Tap a section to open it. Changes save when you go back.", 14f, MUTED), lp(4))
+
         val enabledSw = Switch(this).apply {
             text = "Locked In is on"
             setTextColor(Color.WHITE)
+            textSize = 17f
+            typeface = Typeface.DEFAULT_BOLD
             isChecked = p.enabled
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = rounded(CARD)
         }
-        col.addView(enabledSw, lp(8))
+        set.addView(enabledSw, lp(16))
         savers.add { p.enabled = enabledSw.isChecked }
 
-        col.addView(label("Quiz makers (tried top to bottom). Switch one off to hide its settings.", 13f, MUTED), lp(14))
-
-        // Gemini
-        val gemBox = providerBox(col, "Gemini (free)", p.useGemini) { p.useGemini = it }
-        textField(gemBox, "Gemini API key", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
-        textField(gemBox, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
-        testButton(gemBox, "Test Gemini key", "Gemini test", "Testing…") {
-            "✅ Working (model: ${Quiz.testGemini(p)}). Quizzes are ready to go."
+        // 1. YouTubers & videos
+        val yt = group(set, "📺  YouTubers & videos") {
+            "${YouTube.channelList(p).joinToString()} · ${p.minMinutes}+ min"
         }
+        channelEditor(yt)
+        intField(yt, "Shortest video (minutes)", p.minMinutes) { p.minMinutes = it.coerceAtLeast(1) }
+        intField(yt, "Longest video for \"Surprise me\" (minutes)", p.maxMinutes) { p.maxMinutes = it.coerceAtLeast(p.minMinutes) }
+        textField(yt, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
+        textField(yt, "YouTube Data API key (optional)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
 
-        // OpenRouter
-        val orBox = providerBox(col, "OpenRouter (free backup)", p.useOpenRouter) { p.useOpenRouter = it }
-        textField(orBox, "OpenRouter API key", p.openRouterKey, secret = true) { p.openRouterKey = it.trim() }
-        textField(orBox, "OpenRouter model", p.openRouterModel) { p.openRouterModel = it.trim() }
-        testButton(orBox, "Test OpenRouter key", "OpenRouter test", "Testing… (free models can take up to a minute)") {
-            "✅ Working. It replied: ${Quiz.testOpenRouter(p)}"
+        // 2. Schedule
+        val sch = group(set, "⏰  When it locks") {
+            "${hour(p.windowStartHour)}–${hour(p.windowEndHour)}" +
+                (if (p.workEnabled) " · not at work ${Session.hhmm(p.workStartMin)}–${Session.hhmm(p.workEndMin)}" else "")
         }
-
-        // Claude
-        val clBox = providerBox(col, "Claude (paid)", p.useClaude) { p.useClaude = it }
-        textField(clBox, "Claude API key", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
-        textField(clBox, "Claude model", p.claudeModel) { p.claudeModel = it.trim() }
-
-        // Built-in
-        providerBox(col, "Built-in fill-in-the-blank (no AI, no key)", p.useBuiltIn) { p.useBuiltIn = it }
-
-        col.addView(section("Videos & schedule"))
-        channelEditor(col)
-        textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
-        textField(col, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
-        intField(col, "Shortest video (minutes)", p.minMinutes) { p.minMinutes = it.coerceAtLeast(1) }
-        intField(col, "Longest video (minutes)", p.maxMinutes) { p.maxMinutes = it.coerceAtLeast(p.minMinutes) }
-        intField(col, "Lock can start from (hour, 0–23)", p.windowStartHour) { p.windowStartHour = it.coerceIn(0, 23) }
-        intField(col, "No new lock after (hour, 1–24)", p.windowEndHour) { p.windowEndHour = it.coerceIn(1, 24) }
-        val workBox = providerBox(col, "Never lock during work hours", p.workEnabled) { p.workEnabled = it }
+        intField(sch, "Earliest lock (hour, 0–23)", p.windowStartHour) { p.windowStartHour = it.coerceIn(0, 23) }
+        intField(sch, "No new lock after (hour, 1–24)", p.windowEndHour) { p.windowEndHour = it.coerceIn(1, 24) }
+        intField(sch, "Wait if an alarm is due within (minutes)", p.alarmBufferMin) { p.alarmBufferMin = it.coerceAtLeast(0) }
+        val workBox = providerBox(sch, "Never lock during work hours", p.workEnabled) { p.workEnabled = it }
         textField(workBox, "Work starts (e.g. 8:30am)", Session.hhmm(p.workStartMin)) { v ->
             Session.parseHhmm(v)?.let { p.workStartMin = it } ?: toast("Couldn't read work start time \"$v\"")
         }
@@ -141,67 +176,159 @@ class MainActivity : Activity() {
             Session.parseHhmm(v)?.let { p.workEndMin = it } ?: toast("Couldn't read work end time \"$v\"")
         }
         toggle(workBox, "Weekdays only (Mon–Fri)", p.workWeekdaysOnly) { p.workWeekdaysOnly = it }
-        col.addView(section("Scroll check-ins"))
-        val scrollBox = providerBox(col, "Check in while I scroll (Instagram, TikTok)", p.scrollEnabled) { p.scrollEnabled = it }
-        scrollBox.addView(label("Every 15–20 min of scrolling, you're forced into a short quiz on your previous days' videos. You can't leave until it's done. Then you choose: keep going, or close the app.", 13f, MUTED), lp(6))
-        intField(scrollBox, "Recall quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
-        intField(scrollBox, "Recall quiz time limit (minutes)", p.recallSeconds / 60) { p.recallSeconds = it.coerceIn(1, 30) * 60 }
-        scrollBox.addView(label("Questions saved so far: ${Bank.size(this)} (every morning quiz adds more)", 12f, MUTED), lp(4))
+
+        // 3. Quiz
+        val qz = group(set, "🧠  Quiz") {
+            val makers = buildList {
+                if (p.useGemini) add("Gemini"); if (p.useOpenRouter) add("OpenRouter")
+                if (p.useClaude) add("Claude"); if (p.useBuiltIn) add("built-in")
+            }.joinToString(" → ").ifEmpty { "no quiz maker on" }
+            "${p.quizQuestions} questions · ${p.quizSeconds / 60} min · pass ${p.passPercent}% · $makers"
+        }
+        intField(qz, "Questions", p.quizQuestions) { p.quizQuestions = it.coerceIn(3, 20) }
+        intField(qz, "Time limit (seconds)", p.quizSeconds) { p.quizSeconds = it.coerceIn(60, 1800) }
+        intField(qz, "Pass mark (%)", p.passPercent) { p.passPercent = it.coerceIn(10, 100) }
+        qz.addView(label("Who writes the quiz (tried top to bottom)", 13f, MUTED), lp(18))
+        val gemBox = providerBox(qz, "Gemini (free)", p.useGemini) { p.useGemini = it }
+        textField(gemBox, "Gemini API key", p.geminiKey, secret = true) { p.geminiKey = it.trim() }
+        textField(gemBox, "Gemini model", p.geminiModel) { p.geminiModel = it.trim() }
+        testButton(gemBox, "Test Gemini key", "Gemini test", "Testing…") {
+            "✅ Working (model: ${Quiz.testGemini(p)}). Quizzes are ready to go."
+        }
+        val orBox = providerBox(qz, "OpenRouter (free backup)", p.useOpenRouter) { p.useOpenRouter = it }
+        textField(orBox, "OpenRouter API key", p.openRouterKey, secret = true) { p.openRouterKey = it.trim() }
+        textField(orBox, "OpenRouter model", p.openRouterModel) { p.openRouterModel = it.trim() }
+        testButton(orBox, "Test OpenRouter key", "OpenRouter test", "Testing… (free models can take up to a minute)") {
+            "✅ Working. It replied: ${Quiz.testOpenRouter(p)}"
+        }
+        val clBox = providerBox(qz, "Claude (paid)", p.useClaude) { p.useClaude = it }
+        textField(clBox, "Claude API key", p.claudeKey, secret = true) { p.claudeKey = it.trim() }
+        textField(clBox, "Claude model", p.claudeModel) { p.claudeModel = it.trim() }
+        providerBox(qz, "Built-in fill-in-the-blank (no key)", p.useBuiltIn) { p.useBuiltIn = it }
+
+        // 4. Scroll check-ins
+        val sc = group(set, "📱  Scroll check-ins") {
+            if (!p.scrollEnabled) "Off" else "Every ${p.scrollMinMin}–${p.scrollMaxMin} min · ${p.recallQuestions}-question quiz"
+        }
+        val scrollBox = providerBox(sc, "Quiz me while I scroll", p.scrollEnabled) { p.scrollEnabled = it }
+        scrollBox.addView(label("After ${p.scrollMinMin}–${p.scrollMaxMin} min in Instagram or TikTok, you get a short forced quiz on earlier videos. Questions saved so far: ${Bank.size(this)}.", 13f, MUTED), lp(6))
         intField(scrollBox, "Check in after at least (minutes)", p.scrollMinMin) { p.scrollMinMin = it.coerceIn(1, 120) }
         intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
-        textField(scrollBox, "Apps to watch (package names, comma separated)", p.scrollApps, multi = true) { p.scrollApps = it.replace("\n", ",") }
+        intField(scrollBox, "Quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
+        intField(scrollBox, "Quiz time limit (minutes)", p.recallSeconds / 60) { p.recallSeconds = it.coerceIn(1, 30) * 60 }
+        textField(scrollBox, "Apps to watch (package names)", p.scrollApps, multi = true) { p.scrollApps = it.replace("\n", ",") }
         scrollBox.addView(label("Instagram = com.instagram.android · TikTok = com.zhiliaoapp.musically · YouTube = com.google.android.youtube · Facebook = com.facebook.katana", 12f, MUTED), lp(4))
 
-        col.addView(section("Quiz & messages"))
-        intField(col, "Wait if an alarm is due within (minutes)", p.alarmBufferMin) { p.alarmBufferMin = it.coerceAtLeast(0) }
-        intField(col, "Quiz questions", p.quizQuestions) { p.quizQuestions = it.coerceIn(3, 20) }
-        intField(col, "Quiz time limit (seconds)", p.quizSeconds) { p.quizSeconds = it.coerceIn(60, 1800) }
-        intField(col, "Pass mark (%)", p.passPercent) { p.passPercent = it.coerceIn(10, 100) }
-        textField(col, "Messaging apps allowed (package names)", p.messagingApps) {
-            p.messagingApps = it.replace("\n", ",")
+        // 5. Messages
+        val msg = group(set, "💬  Messages during the lock") {
+            "${p.messagingBudgetSec / 60} min total · ${p.messagingVisitSec / 60} min per visit"
         }
-        intField(col, "Message time per session (minutes)", p.messagingBudgetSec / 60) { p.messagingBudgetSec = it.coerceAtLeast(0) * 60 }
-        intField(col, "Longest single message visit (seconds)", p.messagingVisitSec) { p.messagingVisitSec = it.coerceAtLeast(15) }
+        msg.addView(label("Messenger and SMS open only after a new message arrives. Calls and alarms always work.", 13f, MUTED), lp(6))
+        intField(msg, "Message time per session (minutes)", p.messagingBudgetSec / 60) { p.messagingBudgetSec = it.coerceAtLeast(0) * 60 }
+        intField(msg, "Longest single visit (seconds)", p.messagingVisitSec) { p.messagingVisitSec = it.coerceAtLeast(15) }
+        textField(msg, "Messaging apps (package names)", p.messagingApps) { p.messagingApps = it.replace("\n", ",") }
 
-        col.addView(button("Save settings", ORANGE) {
-            if (p.active) return@button
-            savers.forEach { it() }
-            p.poolFetchedAt = 0L // channel or length changes → rebuild the video list
-            toast("Saved")
-            refreshStatus()
-        }, lp(20))
+        set.addView(button("Save", ORANGE) { saveAll(); toast("Saved") }, lp(24))
+        set.addView(label("Breaks: 15 min a day in total, up to 3 breaks.", 13f, MUTED).apply { gravity = Gravity.CENTER }, lp(14))
+        settingsView = scrollOf(set)
 
-        col.addView(button("Check for updates (you have build ${Updater.currentBuild(this)})", CARD) {
-            Updater.check(this)
-        }, lp(10))
-
-        col.addView(button("Start a session now (test)", CARD) {
-            if (Session.inWorkHours(p)) {
-                toast("It's work hours right now, so the lock won't run.")
-                return@button
-            }
-            AlertDialog.Builder(this)
-                .setTitle("Start now?")
-                .setMessage("This locks your phone into today's video and quiz right away, exactly like the morning lock. Breaks and the emergency exit work as normal.")
-                .setPositiveButton("Start") { _, _ ->
-                    savers.forEach { it() }
-                    Session.start(this)
-                    finish()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }, lp(10))
-
-        col.addView(label("Breaks: 15 minutes a day in total, up to 3 breaks (5, 10 or 15 min). Calls and alarms always work. Messaging apps open only after a new message arrives, within your message time.", 13f, MUTED), lp(16))
-
-        val sv = ScrollView(this).apply {
-            setBackgroundColor(Color.BLACK)
-            fitsSystemWindows = true
-            addView(col)
-        }
-        setContentView(sv)
+        setContentView(homeView)
         refreshPerms()
         refreshStatus()
+    }
+
+    private fun hour(h: Int): String = Session.hhmm((h % 24) * 60).let { if (h == 24) "midnight" else it }
+
+    private fun openSettings() {
+        inSettings = true
+        summaries.forEach { it() }
+        setContentView(settingsView)
+        settingsView.scrollTo(0, 0)
+    }
+
+    private fun closeSettings() {
+        saveAll()
+        inSettings = false
+        setContentView(homeView)
+        refreshPerms(); refreshStatus(); refreshDashboard()
+    }
+
+    private fun saveAll() {
+        if (p.active) return
+        savers.forEach { it() }
+        p.poolFetchedAt = 0L // channel or length changes → rebuild the video list
+        summaries.forEach { it() }
+    }
+
+    @Deprecated("Back closes settings")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (inSettings) closeSettings() else super.onBackPressed()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (inSettings) saveAll()
+    }
+
+    private fun confirmStart() {
+        if (Session.inWorkHours(p)) {
+            toast("It's work hours right now, so the lock won't run.")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Start now?")
+            .setMessage("This locks your phone into today's video and quiz right away, exactly like the morning lock.")
+            .setPositiveButton("Start") { _, _ ->
+                savers.forEach { it() }
+                Session.start(this)
+                finish()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** A collapsible settings section: title + one-line summary; tap to open. */
+    private fun group(parent: LinearLayout, title: String, summary: () -> String): LinearLayout {
+        val box = card()
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(label(title, 17f, Color.WHITE, true))
+        val sum = label("", 13f, MUTED).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+        texts.addView(sum, lp(2))
+        head.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val chev = label("›", 26f, MUTED).apply { setPadding(dp(12), 0, dp(2), 0) }
+        head.addView(chev)
+        box.addView(head)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE; setPadding(0, dp(6), 0, dp(4)) }
+        box.addView(body)
+        head.setOnClickListener {
+            val open = body.visibility != android.view.View.VISIBLE
+            body.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
+            chev.text = if (open) "⌄" else "›"
+            if (!open) { savers.forEach { it() }; summaries.forEach { it() } }
+        }
+        summaries.add { sum.text = summary() }
+        sum.text = summary()
+        parent.addView(box, lp(10))
+        return body
+    }
+
+    private fun pill(text: String, onClick: () -> Unit) = label(text, 14f, Color.WHITE, true).apply {
+        setPadding(dp(14), dp(8), dp(14), dp(8))
+        background = rounded(CARD).apply { cornerRadius = dp(20).toFloat() }
+        setOnClickListener { onClick() }
+    }
+
+    private fun column() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(20), dp(28), dp(20), dp(40))
+    }
+
+    private fun scrollOf(v: android.view.View) = ScrollView(this).apply {
+        setBackgroundColor(Color.BLACK)
+        fitsSystemWindows = true
+        addView(v)
     }
 
     // ------------------------------------------------------------------ status
@@ -353,36 +480,74 @@ class MainActivity : Activity() {
 
     private fun refreshStatus() {
         statusBox.removeAllViews()
-        val today = Session.today()
-        val doneToday = p.completedDay == today
-        statusBox.addView(label(
-            if (doneToday) "Today's session: done ✅" else "Today's session: not done yet",
-            16f, Color.WHITE, true
-        ), lp(6))
+        val doneToday = p.completedDay == Session.today()
+        val work = Session.inWorkHours(p)
+        val (icon, head) = when {
+            !p.enabled -> "⏸" to "Locked In is off"
+            doneToday -> "✅" to "Done for today"
+            work -> "💼" to "Work hours: no lock"
+            else -> "⏳" to "Today's video: not done yet"
+        }
+        statusBox.addView(label("$icon  $head", 22f, Color.WHITE, true))
         val am = getSystemService(AlarmManager::class.java)
         val next = am?.nextAlarmClock
-        val nextText = if (next == null) "No alarm set" else
-            "Next alarm: " + SimpleDateFormat("EEE h:mm a", Locale.getDefault()).format(Date(next.triggerTime))
-        statusBox.addView(label("$nextText · lock window ${p.windowStartHour}:00–${p.windowEndHour}:00", 14f, MUTED), lp(4))
-        if (p.workEnabled) statusBox.addView(label(
-            "No lock during work: ${Session.hhmm(p.workStartMin)}–${Session.hhmm(p.workEndMin)}" +
-                (if (p.workWeekdaysOnly) ", Mon–Fri" else ", every day") +
-                (if (Session.inWorkHours(p)) " (work hours now)" else ""), 14f, MUTED), lp(2))
+        val sub = when {
+            !p.enabled -> "Switch it on in Settings."
+            doneToday -> "Nice work. See you tomorrow morning."
+            next != null -> "Next alarm " + SimpleDateFormat("EEE h:mma", Locale.getDefault()).format(Date(next.triggerTime)).lowercase() +
+                ". The lock starts on your first unlock after it."
+            else -> "The lock starts on your first unlock between ${hour(p.windowStartHour)} and ${hour(p.windowEndHour)}."
+        }
+        statusBox.addView(label(sub, 15f, MUTED), lp(6))
 
+        // Last 7 days → in "See all stats"
+        histBox.removeAllViews()
         val hist = Session.history(p).takeLast(7).reversed()
         if (hist.isNotEmpty()) {
-            statusBox.addView(label("Last ${hist.size} days", 14f, ORANGE, true), lp(12))
+            val c = card()
+            c.addView(label("Last ${hist.size} days", 13f, MUTED))
             for (h in hist) {
-                val extra = buildList {
-                    if (h.optInt("extMin") > 0) add("${h.optInt("extMin")} min breaks")
-                    if (h.optInt("msgSec") > 0) add("${h.optInt("msgSec") / 60}m ${h.optInt("msgSec") % 60}s messages")
-                    if (h.optInt("quizRounds") > 1) add("${h.optInt("quizRounds")} quiz tries")
-                }.joinToString(" · ")
-                val line = "${h.optString("day")}  ${h.optString("result")}" +
-                    (if (h.optString("video").isNotEmpty()) "\n${h.optString("video")}" else "") +
-                    (if (extra.isNotEmpty()) "\n$extra" else "")
-                statusBox.addView(label(line, 13f, Color.WHITE), lp(8))
+                val r = h.optString("result")
+                val icon2 = when { r.startsWith("Passed") -> "✅"; r.startsWith("Wrote") -> "📝"; else -> "⚠️" }
+                c.addView(label("$icon2  ${h.optString("day")} · $r", 14f, Color.WHITE, true), lp(10))
+                if (h.optString("video").isNotEmpty()) c.addView(label(h.optString("video"), 13f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, lp(2))
             }
+            histBox.addView(c, lp(8))
+        }
+    }
+
+    /** The simple home numbers: watched, quiz average, streak, and per-YouTuber time. */
+    private fun refreshSummary() {
+        summaryBox.removeAllViews()
+        val st = Stats.load(this)
+        val watch = Stats.watchSeconds(this)
+        val q = st.optInt(Stats.QUIZ_QUESTIONS)
+        val avg = if (q > 0) "${st.optInt(Stats.QUIZ_CORRECT) * 100 / q}%" else "–"
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((v, n) in listOf(Stats.hours(watch.values.sum()) to "watched", avg to "quiz average", "${streak()}" to "day streak")) {
+            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            c.addView(label(v, 26f, Color.WHITE, true))
+            c.addView(label(n, 13f, MUTED))
+            row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        summaryBox.addView(row)
+        val names = (YouTube.channelList(p) + watch.keys.filter { it != "Other" && (watch[it] ?: 0.0) > 60 })
+            .distinct().sortedByDescending { watch[it] ?: 0.0 }.take(5)
+        if (names.isNotEmpty()) {
+            summaryBox.addView(android.view.View(this).apply { setBackgroundColor(0xFF2C2C30.toInt()) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(14) })
+            for (n in names) {
+                val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                r.addView(label(n, 15f, Color.WHITE).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                r.addView(label(Stats.hours(watch[n] ?: 0.0), 15f, ORANGE, true))
+                summaryBox.addView(r, lp(10))
+            }
+        }
+        if (p.scrollEnabled) {
+            val today = Scroll.timeByApp(this, 1).values.sum()
+            val ci = Scroll.log(this).count { System.currentTimeMillis() - it.optLong("t") < 86_400_000L && SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(it.optLong("t"))) == Session.today() }
+            summaryBox.addView(label("📱  Scrolling today: ${Stats.hours(today)}" + (if (ci > 0) " · $ci check-in${if (ci == 1) "" else "s"}" else ""), 14f, MUTED), lp(14))
         }
     }
 
@@ -425,9 +590,10 @@ class MainActivity : Activity() {
             }
         }
         if (!Quiz.hasProvider(p) && !p.useBuiltIn) {
-            permBox.addView(label("Switch on a quiz maker below (Gemini: aistudio.google.com/apikey, OpenRouter: openrouter.ai/keys) or the built-in quiz. Otherwise you'll write a summary instead.", 13f, RED), lp(10))
+            permBox.addView(label("No quiz maker is on. Open Settings → Quiz and switch one on, or you'll write a summary instead of a quiz.", 13f, RED), lp(10))
         }
         val allDone = permBox.childCount == 0
+        permTitle?.text = "Finish setup"
         permTitle?.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
         permBox.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
     }
@@ -467,7 +633,7 @@ class MainActivity : Activity() {
                 else -> InputType.TYPE_CLASS_TEXT
             }
             if (multi) minLines = 2
-            background = rounded(CARD)
+            background = rounded(FIELD)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         col.addView(et, lp(4))
@@ -500,7 +666,7 @@ class MainActivity : Activity() {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(14), dp(10), dp(8), dp(10))
-                    background = rounded(CARD)
+                    background = rounded(FIELD)
                 }
                 row.addView(label(name, 15f, Color.WHITE), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 val x = label("✕", 18f, MUTED).apply {
@@ -522,7 +688,7 @@ class MainActivity : Activity() {
                     for (sname in pair) {
                         val chip = label("+ $sname", 13f, Color.WHITE).apply {
                             setPadding(dp(12), dp(8), dp(12), dp(8))
-                            background = rounded(0xFF26262A.toInt())
+                            background = rounded(0xFF333338.toInt())
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
                             setOnClickListener { setList(YouTube.channelList(p) + sname); redraw() }
@@ -541,7 +707,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 15f
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
-            background = rounded(CARD)
+            background = rounded(FIELD)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         addRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -581,7 +747,7 @@ class MainActivity : Activity() {
     }
 
     private fun testButton(box: LinearLayout, label: String, title: String, testing: String, run: () -> String) {
-        box.addView(button(label, CARD) {
+        box.addView(button(label, FIELD) {
             savers.forEach { it() }
             toast(testing)
             Thread {
@@ -616,7 +782,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 15f
             inputType = InputType.TYPE_CLASS_NUMBER
-            background = rounded(CARD)
+            background = rounded(FIELD)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         col.addView(et, lp(4))

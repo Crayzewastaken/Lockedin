@@ -147,12 +147,29 @@ adb shell chmod 660 /data/data/$PKG/shared_prefs/stats.xml
 adb shell restorecon -R /data/data/$PKG/shared_prefs || true
 adb shell am start -n $PKG/.MainActivity
 sleep 4
-adb exec-out screencap -p > $OUT/5-main-top.png
-for i in 1 2 3 4 5; do
-  adb shell input swipe 540 1900 540 700 400
-  sleep 1
-  adb exec-out screencap -p > $OUT/6-main-scroll-$i.png
-done
+adb exec-out screencap -p > $OUT/5-home.png
+adb shell input swipe 540 1900 540 700 400
+sleep 1
+adb exec-out screencap -p > $OUT/5b-home-scrolled.png
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-home.xml >/dev/null 2>&1
+tap_text "See all stats  ▾" $OUT/ui-home.xml
+sleep 1
+adb exec-out screencap -p > $OUT/5c-home-allstats.png
+adb shell input swipe 540 600 540 2000 200; adb shell input swipe 540 600 540 2000 200; adb shell input swipe 540 600 540 2000 200
+sleep 1
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-home2.xml >/dev/null 2>&1
+tap_text "⚙  Settings" $OUT/ui-home2.xml
+sleep 1.5
+adb exec-out screencap -p > $OUT/6-settings.png
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-settings.xml >/dev/null 2>&1
+tap_text "📺  YouTubers &amp; videos" $OUT/ui-settings.xml
+sleep 1.5
+adb exec-out screencap -p > $OUT/6b-settings-youtubers.png
+adb shell input keyevent KEYCODE_BACK
+sleep 1
 
 # ---- Scroll check-in screen
 adb shell am start -n $PKG/.CheckInActivity --es app com.instagram.android --ei min 17
