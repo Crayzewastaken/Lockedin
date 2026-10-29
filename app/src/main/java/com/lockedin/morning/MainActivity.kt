@@ -80,6 +80,7 @@ class MainActivity : Activity() {
     private lateinit var histBox: LinearLayout
     private lateinit var moreLink: TextView
     private var inSettings = false
+    private var liveTicker: (() -> Unit)? = null
     private val summaries = mutableListOf<() -> Unit>()
 
     private fun build() {
@@ -212,6 +213,25 @@ class MainActivity : Activity() {
         }
         val scrollBox = providerBox(sc, "Quiz me while I scroll", p.scrollEnabled) { p.scrollEnabled = it }
         scrollBox.addView(label("After ${p.scrollMinMin}–${p.scrollMaxMin} min in Instagram or TikTok, you get a short forced quiz on earlier videos. Questions saved so far: ${Bank.size(this)}.", 13f, MUTED), lp(6))
+        val live = label("", 13f, ORANGE)
+        scrollBox.addView(live, lp(8))
+        val accessOk = (Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "").contains("$packageName/")
+        val liveTick = object : Runnable {
+            override fun run() {
+                live.text = if (!accessOk || EnforcerService.instance == null)
+                    "⚠️ Accessibility for Locked In is off, so nothing is being counted. Turn it on from the home screen."
+                else "Live: " + Scroll.status(this@MainActivity, p)
+                if (inSettings) live.postDelayed(this, 1000)
+            }
+        }
+        liveTicker = { live.removeCallbacks(liveTick); live.post(liveTick) }
+        scrollBox.addView(button("Test check-in now", FIELD) {
+            saveAll()
+            startActivity(Intent(this, CheckInActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(CheckInActivity.EXTRA_APP, "com.instagram.android")
+                .putExtra(CheckInActivity.EXTRA_MIN, p.scrollMinMin))
+        }, lp(8))
         intField(scrollBox, "Check in after at least (minutes)", p.scrollMinMin) { p.scrollMinMin = it.coerceIn(1, 120) }
         intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
         intField(scrollBox, "Quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
@@ -244,6 +264,7 @@ class MainActivity : Activity() {
         summaries.forEach { it() }
         setContentView(settingsView)
         settingsView.scrollTo(0, 0)
+        liveTicker?.invoke()
     }
 
     private fun closeSettings() {
@@ -257,6 +278,7 @@ class MainActivity : Activity() {
         if (p.active) return
         savers.forEach { it() }
         p.poolFetchedAt = 0L // channel or length changes → rebuild the video list
+        Scroll.ensureInterval(p) // new check-in minutes take effect straight away
         summaries.forEach { it() }
     }
 

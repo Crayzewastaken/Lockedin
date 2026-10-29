@@ -26,10 +26,33 @@ object Scroll {
     fun apps(p: Prefs): Set<String> =
         p.scrollApps.split(",", "\n").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
+    private var intervalKey = ""
+    var lastSeenApp = ""
+    var lastSeenAt = 0L
+
     fun newInterval(p: Prefs): Double {
         val lo = p.scrollMinMin.coerceAtLeast(1)
         val hi = p.scrollMaxMin.coerceAtLeast(lo)
+        intervalKey = "$lo-$hi"
         return Random.nextInt(lo * 60, hi * 60 + 1).toDouble()
+    }
+
+    /** Pick a new target if there isn't one, or if you changed the minutes in settings. */
+    fun ensureInterval(p: Prefs) {
+        val key = "${p.scrollMinMin.coerceAtLeast(1)}-${p.scrollMaxMin.coerceAtLeast(p.scrollMinMin.coerceAtLeast(1))}"
+        if (nextPromptSec <= 0 || key != intervalKey) nextPromptSec = newInterval(p)
+    }
+
+    /** One line for settings: is it counting, and how long until the next check-in. */
+    fun status(ctx: Context, p: Prefs): String {
+        if (!p.scrollEnabled) return "Off."
+        if (p.active) return "Paused while the morning lock is running."
+        val seen = if (lastSeenAt == 0L) "Not seen Instagram/TikTok yet since the app started."
+            else "Last seen: ${appName(ctx, lastSeenApp)} ${((System.currentTimeMillis() - lastSeenAt) / 1000)}s ago."
+        if (nextPromptSec <= 0) return "Waiting for you to open a watched app. $seen"
+        val done = sinceCheckInSec.toInt()
+        val target = nextPromptSec.toInt()
+        return "Scrolled ${done / 60}m ${done % 60}s of ${target / 60}m ${target % 60}s before the next check-in. $seen"
     }
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)

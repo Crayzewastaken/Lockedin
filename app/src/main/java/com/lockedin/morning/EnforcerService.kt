@@ -174,7 +174,9 @@ class EnforcerService : AccessibilityService() {
             // Back from a long gap (5+ min away): start a fresh count.
             if (Scroll.awaySince != 0L && now - Scroll.awaySince > 5 * 60_000L) Scroll.sinceCheckInSec = 0.0
             Scroll.awaySince = 0L
-            if (Scroll.nextPromptSec <= 0) Scroll.nextPromptSec = Scroll.newInterval(p)
+            Scroll.ensureInterval(p)
+            Scroll.lastSeenApp = pkg
+            Scroll.lastSeenAt = System.currentTimeMillis()
             Scroll.currentApp = pkg
             Scroll.sinceCheckInSec += dt
             Scroll.addTime(this, pkg, dt)
