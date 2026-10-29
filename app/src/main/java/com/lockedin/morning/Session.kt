@@ -80,8 +80,27 @@ object Session {
         return true
     }
 
-    fun start(ctx: Context) {
+    /** Last day of the week and still short of the goal: lock regardless of the time window. */
+    fun shouldForceCatchUp(ctx: Context): Boolean {
         val p = Prefs(ctx)
+        if (!p.enabled || p.active || !Goal.enabled(p) || !Goal.isLastDay()) return false
+        if (inWorkHours(p) || alarmSoon(ctx, p)) return false
+        if (p.sp.getString("noForceDay", "") == today()) return false // used the emergency exit today
+        return Goal.remainingWeekSec(ctx, p) >= 60
+    }
+
+    /** A catch-up session: keep watching until [seconds] more video is done. */
+    fun startCatchUp(ctx: Context, seconds: Int) {
+        start(ctx, catchUpSec = seconds)
+    }
+
+    fun start(ctx: Context, catchUpSec: Int = -1) {
+        val p = Prefs(ctx)
+        // Sunday and short of the weekly goal: this session covers what's left.
+        val need = if (catchUpSec >= 0) catchUpSec
+            else if (Goal.enabled(p) && Goal.isLastDay()) Goal.remainingWeekSec(ctx, p).toInt() else 0
+        p.catchUpTargetSec = if (need >= 60) need else 0
+        p.catchUpDoneSec = 0
         p.sessionDay = today()
         p.sessionStartedAt = System.currentTimeMillis()
         p.phase = PICKING
@@ -105,6 +124,26 @@ object Session {
         Stats.inc(ctx, Stats.SESSIONS)
         launch(ctx, null)
     }
+
+    /** Catch-up: the video + quiz is done but there's time left: line up the next video. */
+    fun nextVideo(ctx: Context) {
+        val p = Prefs(ctx)
+        if (p.videoId.isNotEmpty()) markWatched(p, p.videoId)
+        p.phase = PICKING
+        p.pickChosen = false
+        p.pickError = ""
+        p.videoId = ""
+        p.videoTitle = ""
+        p.videoAuthor = ""
+        p.videoDuration = 0
+        p.positionSec = 0
+        p.watchedSec = 0
+        resetQuiz(p)
+        p.quizRound = 0
+        p.quizPrevQs = ""
+    }
+
+    fun catchUpLeftSec(p: Prefs): Int = (p.catchUpTargetSec - p.catchUpDoneSec).coerceAtLeast(0)
 
     fun resetQuiz(p: Prefs) {
         p.quizJson = ""
@@ -170,6 +209,7 @@ object Session {
     // ---------- End ----------
     fun finish(ctx: Context, result: String, note: String = "") {
         val p = Prefs(ctx)
+        if (result.startsWith("Emergency") || result.startsWith("Skipped")) p.sp.edit().putString("noForceDay", today()).apply()
         val hist = try { JSONArray(p.historyJson) } catch (_: Exception) { JSONArray() }
         hist.put(
             JSONObject()
@@ -191,6 +231,8 @@ object Session {
 
         if (p.videoId.isNotEmpty()) markWatched(p, p.videoId)
         p.completedDay = p.sessionDay.ifEmpty { today() }
+        p.catchUpTargetSec = 0
+        p.catchUpDoneSec = 0
         p.active = false
         p.phase = ""
         p.extUntil = 0L

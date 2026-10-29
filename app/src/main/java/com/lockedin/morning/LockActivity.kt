@@ -70,6 +70,7 @@ class LockActivity : Activity() {
     private var lastCur = 0.0
     private var maxReached = 0.0
     private var seeking = false
+    private var catchAcc = 0.0
     private var triedSkip = false
     private var seekBar: SeekBar? = null
     private var latestBtn: Button? = null
@@ -199,7 +200,11 @@ class LockActivity : Activity() {
         val len = Lengths.current(p)
         val col = column(center = false)
         col.addView(label("Good morning.", 30f, Color.WHITE, bold = true))
-        col.addView(label("Pick today's video.", 17f, MUTED), lp(top = 4))
+        val catchLeft = Session.catchUpLeftSec(p)
+        if (p.catchUpTargetSec > 0) {
+            col.addView(label("Catch-up: ${Goal.hm(catchLeft.toDouble())} to go.", 17f, ORANGE, bold = true), lp(top = 4))
+            col.addView(label("Pick one long video, or several back to back.", 15f, MUTED), lp(top = 4))
+        } else col.addView(label("Pick today's video.", 17f, MUTED), lp(top = 4))
         col.addView(label("${chosenChannels().joinToString()} · ${len.label}  (change in Settings)", 13f, MUTED), lp(top = 10))
         val status = label("Finding videos…", 15f, MUTED)
         col.addView(status, lp(top = 16))
@@ -214,10 +219,14 @@ class LockActivity : Activity() {
         root.addView(scroll(col))
 
         val chans = chosenChannels()
-        val minS = len.min * 60
-        val maxS = len.max * 60
+        val catching = p.catchUpTargetSec > 0
+        val minS = if (catching) p.minMinutes * 60 else len.min * 60
+        val maxS = if (catching) 4 * 3600 else len.max * 60
         io.execute {
-            val list = try { YouTube.candidates(p, chans, minS, maxS, 5) } catch (_: Exception) { emptyList() }
+            val list = try {
+                val raw = YouTube.candidates(p, chans, minS, maxS, if (catching) 12 else 5)
+                if (catching) raw.sortedByDescending { it.lengthSec }.take(5) else raw
+            } catch (_: Exception) { emptyList() }
             ui.post {
                 if (isFinishing || screen != Session.PICKING) return@post
                 if (list.isEmpty()) {
@@ -293,7 +302,12 @@ class LockActivity : Activity() {
             var err: String? = null
             try {
                 val l = Lengths.current(p)
-                val v = YouTube.pick(this, p, chosenChannels(), l.min * 60, l.max * 60)
+                val left = Session.catchUpLeftSec(p)
+                val v = if (p.catchUpTargetSec > 0 && left > 0) {
+                    // Catch-up: try one video long enough to cover it, else any long one.
+                    try { YouTube.pick(this, p, chosenChannels(), left.coerceIn(p.minMinutes * 60, 3 * 3600), 4 * 3600) }
+                    catch (_: Exception) { YouTube.pick(this, p, chosenChannels(), p.minMinutes * 60, 4 * 3600) }
+                } else YouTube.pick(this, p, chosenChannels(), l.min * 60, l.max * 60)
                 Session.applyPick(this, v)
             } catch (e: Exception) {
                 err = e.message ?: e.javaClass.simpleName
@@ -596,7 +610,14 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         if (screen != Session.VIDEO) return
         val now = SystemClock.elapsedRealtime()
         if (state == 1) { // playing
-            if (lastTickWall > 0) Stats.addWatch(this, p.videoAuthor, ((now - lastTickWall) / 1000.0).coerceAtMost(2.0))
+            if (lastTickWall > 0) {
+                val dt = ((now - lastTickWall) / 1000.0).coerceAtMost(2.0)
+                Stats.addWatch(this, p.videoAuthor, dt)
+                if (p.catchUpTargetSec > 0) {
+                    catchAcc += dt
+                    if (catchAcc >= 1.0) { p.catchUpDoneSec = p.catchUpDoneSec + catchAcc.toInt(); catchAcc -= catchAcc.toInt() }
+                }
+            }
             val allowance = if (lastTickWall > 0) (now - lastTickWall) / 1000.0 * 1.25 + 1.0 else 3.0
             if (cur > maxReached && cur <= maxReached + allowance) maxReached = cur
             lastTickWall = now
@@ -905,6 +926,17 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
             Bank.addFromMorning(this, qs, answers, p.videoTitle, p.videoAuthor, p.sessionDay.ifEmpty { Session.today() })
         }
 
+        if (score >= needed && p.catchUpTargetSec > 0 && Session.catchUpLeftSec(p) >= 60) {
+            val left = Session.catchUpLeftSec(p)
+            col.addView(label("Passed: $score/$n ✅", 30f, Color.WHITE, bold = true))
+            col.addView(label("Catch-up: ${Goal.hm(left.toDouble())} still to go. Next video.", 17f, MUTED), lp(top = 8))
+            col.addView(button("Next video", ORANGE) {
+                Session.nextVideo(this)
+                render()
+            }, lp(top = 28))
+            root.addView(scroll(col))
+            return
+        }
         if (score >= needed) {
             Session.finish(this, "Passed quiz $score/$n", p.videoTitle)
             col.addView(label("Locked in. ✅", 30f, Color.WHITE, bold = true))

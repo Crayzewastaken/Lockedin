@@ -11,6 +11,7 @@ object Stats {
 
     // Watch time is added every second, so it's buffered in memory and saved every ~15 s.
     private val pendingWatch = HashMap<String, Double>()
+    private val pendingDays = HashMap<String, Double>()
     private var lastFlush = 0L
 
     const val PAUSES = "pauses"
@@ -61,6 +62,8 @@ object Stats {
     @Synchronized
     fun addWatch(ctx: Context, author: String, seconds: Double) {
         if (seconds <= 0) return
+        val day = Session.today()
+        pendingDays[day] = (pendingDays[day] ?: 0.0) + seconds
         val b = bucket(ctx, author)
         pendingWatch[b] = (pendingWatch[b] ?: 0.0) + seconds
         val now = System.currentTimeMillis()
@@ -70,14 +73,26 @@ object Stats {
     @Synchronized
     fun flush(ctx: Context) {
         lastFlush = System.currentTimeMillis()
-        if (pendingWatch.isEmpty()) return
+        if (pendingWatch.isEmpty() && pendingDays.isEmpty()) return
         val j = load(ctx)
         val w = j.optJSONObject("watch") ?: JSONObject()
         for ((k, v) in pendingWatch) w.put(k, w.optDouble(k, 0.0) + v)
         j.put("watch", w)
+        val d = j.optJSONObject("watchDays") ?: JSONObject()
+        for ((k, v) in pendingDays) d.put(k, d.optDouble(k, 0.0) + v)
+        // keep ~90 days
+        val keys = d.keys().asSequence().toList().sorted()
+        for (k in keys.dropLast(90)) d.remove(k)
+        j.put("watchDays", d)
         pendingWatch.clear()
+        pendingDays.clear()
         save(ctx, j)
     }
+
+    /** Seconds of video watched on a date (yyyy-MM-dd), including unsaved time. */
+    @Synchronized
+    fun watchedOn(ctx: Context, day: String): Double =
+        (load(ctx).optJSONObject("watchDays")?.optDouble(day, 0.0) ?: 0.0) + (pendingDays[day] ?: 0.0)
 
     @Synchronized
     fun videoDone(ctx: Context, author: String) {

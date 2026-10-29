@@ -159,6 +159,10 @@ class SetupActivity : Activity() {
             "Each morning you'll get videos about this long. You can change it any time in Settings.",
             extra = { lengths(it) })
 
+        list += Step("🎯", "Weekly learning goal",
+            "How much do you want to learn a day? It adds up per week. Fall behind and you can catch up. On Sunday the lock makes you finish what's left.",
+            extra = { goals(it) })
+
         list += Step("🧠", "Set up the quiz",
             "A free AI key lets the app write a real quiz about each video. Pick one (or set up both, the second is a backup):",
             done = { geminiOk || openRouterOk || p.sp.getBoolean("setupSkipKey", false) },
@@ -284,6 +288,15 @@ class SetupActivity : Activity() {
         for (o in Lengths.options(p)) {
             val on = o == cur
             col.addView(chip((if (on) "✓  " else "") + o.label, on) { Lengths.set(p, o); render() }, lp(8))
+        }
+    }
+
+    private fun goals(col: LinearLayout) {
+        val opts = listOf(30 to "30 min a day (3½ h a week)", 60 to "1 hour a day (7 h a week)", 90 to "1½ hours a day (10½ h a week)",
+            120 to "2 hours a day (14 h a week)", 0 to "No weekly goal")
+        for ((m, t) in opts) {
+            val on = p.dailyGoalMin == m
+            col.addView(chip((if (on) "✓  " else "") + t, on) { p.dailyGoalMin = m; render() }, lp(8))
         }
     }
 

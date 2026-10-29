@@ -127,7 +127,7 @@ class EnforcerService : AccessibilityService() {
         if (locked()) return
         refreshIme()
         val p = Prefs(this)
-        if (!p.active && Session.shouldStart(this)) {
+        if (!p.active && (Session.shouldStart(this) || Session.shouldForceCatchUp(this))) {
             Session.start(this)
         } else if (p.active) {
             enforce()

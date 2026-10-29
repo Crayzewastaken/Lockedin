@@ -19,29 +19,21 @@ import android.widget.TextView
  * the research lines are real findings, worded as associations (not "X times dumber").
  */
 object BrainMeter {
-    const val GREEN = 0xFF2E9E5B.toInt()
-    const val AMBER = 0xFFF2A33A.toInt()
-    const val RED = 0xFFD64545.toInt()
+    val GREEN = Ui.TEAL
+    val AMBER = Ui.AMBER
+    val RED = Ui.RED
     private const val MUTED = 0xFFA0A0A8.toInt()
 
     data class Fact(val text: String, val source: String)
 
-    /** Real findings (see README for links). Worded carefully: links, not proof of cause. */
+    /** Real findings, kept to one line. These are links, not proof of cause. */
     val FACTS = listOf(
-        Fact("A 2025 review of 70 studies (~98,000 people) found heavier short-video use (TikTok, Reels, Shorts) was linked to weaker attention and self-control, most strongly for compulsive use.",
-            "Nguyen et al., Psychological Bulletin, 2025"),
-        Fact("Students who cut social media to 30 minutes a day for 3 weeks had less depression and loneliness than those who didn't.",
-            "Hunt et al., Journal of Social and Clinical Psychology, 2018"),
-        Fact("Average focus on a single screen dropped from about 2½ minutes in 2004 to about 47 seconds in recent studies.",
-            "Gloria Mark, UC Irvine"),
-        Fact("Getting fully back into a task after an interruption can take almost half an hour.",
-            "Gloria Mark, UC Irvine"),
-        Fact("Teens with 4+ hours of daily non-school screen time were about 2.5× as likely to report depression symptoms and 1.6× as likely to have irregular sleep.",
-            "US CDC, Preventing Chronic Disease, 2025"),
-        Fact("The same 2025 review found time spent mattered less than how hooked people felt. Compulsive scrolling showed the strongest links to stress and anxiety.",
-            "Nguyen et al., Psychological Bulletin, 2025"),
-        Fact("Australians average around 41 hours a week online, with nearly half of it on social media.",
-            "We Are Social / Meltwater, Digital 2026: Australia"),
+        Fact("Heavy short-video use is linked to weaker attention and self-control.", "Review of 70 studies, Psychological Bulletin 2025"),
+        Fact("Cutting social media to 30 min a day lowered depression and loneliness in 3 weeks.", "Hunt et al., 2018"),
+        Fact("Average focus on one screen: 2½ minutes in 2004, about 47 seconds now.", "Gloria Mark, UC Irvine"),
+        Fact("Getting back into a task after an interruption can take almost 30 minutes.", "Gloria Mark, UC Irvine"),
+        Fact("Teens on screens 4+ hours a day reported depression symptoms about 2.5× as often.", "US CDC, 2025"),
+        Fact("Compulsive scrolling shows stronger links to stress and anxiety than time spent alone.", "Psychological Bulletin 2025"),
     )
 
     fun colorFor(fraction: Float): Int = when {
@@ -78,65 +70,42 @@ object BrainMeter {
         }
     }
 
-    /** A full card for the home screen (or a compact one for the check-in). */
+    /** Compact card: ring, two lines, one finding. */
     fun card(ctx: Context, p: Prefs, compact: Boolean = false): LinearLayout {
         val d = ctx.resources.displayMetrics.density
         fun dp(v: Int) = (v * d).toInt()
-        fun label(t: String, size: Float, color: Int, bold: Boolean = false) = TextView(ctx).apply {
-            text = t; textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
+        fun label(t: String, size: Float, color: Int, tf: Typeface? = null) = TextView(ctx).apply {
+            text = t; textSize = size; setTextColor(color); if (tf != null) typeface = tf
         }
-        val todaySec = Scroll.timeByApp(ctx, 1).values.sum()
-        val weekSec = Scroll.timeByApp(ctx, 7).values.sum()
-        val todayMin = (todaySec / 60).toInt()
+        val todayMin = (Scroll.timeByApp(ctx, 1).values.sum() / 60).toInt()
+        val tracked = Scroll.daysTracked(ctx, 7)
+        val dailyAvgMin = Scroll.timeByApp(ctx, 7).values.sum() / 60 / tracked
         val limit = p.scrollLimitMin.coerceAtLeast(1)
-        val frac = (todayMin.toFloat() / limit)
+        val frac = todayMin.toFloat() / limit
         val color = colorFor(frac)
 
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = GradientDrawable().apply { setColor(0xFF1C1C1E.toInt()); cornerRadius = dp(12).toFloat() }
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = GradientDrawable().apply { setColor(Ui.SURFACE); cornerRadius = dp(22).toFloat() }
         }
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val ring = Ring(ctx).apply {
-            fraction = frac
-            centerText = if (frac >= 1f) "💀" else "🧠"
-            subText = "$todayMin / $limit min"
-        }
-        val size = if (compact) dp(110) else dp(140)
-        row.addView(ring, LinearLayout.LayoutParams(size, size))
-
-        val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
-        val headline = when {
-            frac >= 1f -> "Over your limit"
-            frac >= 0.5f -> "Getting close"
-            todayMin == 0 -> "Clean so far"
-            else -> "You're fine"
-        }
-        texts.addView(label(headline, 20f, color, true))
-        texts.addView(label("$todayMin min scrolled today", 15f, Color.WHITE), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        // Honest projections from your own numbers.
-        val tracked = Scroll.daysTracked(ctx, 7)
-        val dailyAvgMin = weekSec / 60 / tracked
-        val daysPerYear = dailyAvgMin * 365 / 60 / 24
-        if (dailyAvgMin >= 1) texts.addView(label(
-            "At your ${if (tracked == 1) "current" else "$tracked-day"} pace (${dailyAvgMin.toInt()} min/day) that's ${"%.1f".format(daysPerYear)} full days a year.",
-            13f, MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        if (todayMin >= 20) texts.addView(label(
-            "Today's scrolling = ${todayMin / 40} morning video${if (todayMin / 40 == 1) "" else "s"} you could have watched.",
-            13f, MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        row.addView(ProgressRing(ctx).apply {
+            fraction = frac; this.color = color; emoji = true; stroke = 9f
+            big = if (frac >= 1f) "💀" else "🧠"
+        }, LinearLayout.LayoutParams(if (compact) dp(84) else dp(92), if (compact) dp(84) else dp(92)))
+        val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, 0, 0) }
+        texts.addView(label("$todayMin of $limit min", 24f, color, Ui.NUM))
+        texts.addView(label("scrolled today", 13f, Ui.MUTED))
+        if (dailyAvgMin >= 1) texts.addView(label("≈ ${"%.1f".format(dailyAvgMin * 365 / 1440)} days a year at this pace", 13f, Ui.TEXT),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(row)
 
-        // One research finding, rotating daily.
         val dayIdx = (System.currentTimeMillis() / 86_400_000L).toInt()
         val f = FACTS[Math.floorMod(dayIdx + (if (compact) 3 else 0), FACTS.size)]
-        card.addView(View(ctx).apply { setBackgroundColor(0xFF2C2C30.toInt()) },
-            LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(14) })
-        card.addView(label("🔬  ${f.text}", 14f, 0xFFDDDDDD.toInt()), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        card.addView(label(f.source, 12f, MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        if (!compact) card.addView(label("Studies show links, not proof that scrolling causes these. Your numbers above are exact.", 11f, 0xFF77777C.toInt()),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        card.addView(label(f.text, 14f, Ui.TEXT), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        card.addView(label("${f.source} · a link, not proof", 11f, Ui.MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
         return card
     }
 }

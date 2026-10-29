@@ -32,10 +32,10 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     companion object {
-        private const val FIELD = 0xFF2C2C30.toInt()
+        private const val FIELD = 0xFF223049.toInt()
         private const val ORANGE = 0xFFFF7A1A.toInt()
-        private const val CARD = 0xFF1C1C1E.toInt()
-        private const val MUTED = 0xFFA0A0A8.toInt()
+        private const val CARD = 0xFF172033.toInt()
+        private const val MUTED = 0xFF8A96AB.toInt()
         private const val GREEN = 0xFF2E9E5B.toInt()
         private const val RED = 0xFFD64545.toInt()
     }
@@ -81,6 +81,7 @@ class MainActivity : Activity() {
         refreshSummary()
         refreshDashboard()
         refreshBrain()
+        refreshWeek()
         Updater.refreshLatest(this) { refreshPerms() }
         // The accessibility service can take a moment to connect after the app starts.
         permBox.postDelayed({ if (!isFinishing) refreshPerms() }, 2500)
@@ -96,39 +97,47 @@ class MainActivity : Activity() {
     private lateinit var moreLink: TextView
     private var inSettings = false
     private lateinit var brainBox: LinearLayout
+    private lateinit var weekBox: LinearLayout
     private var liveTicker: (() -> Unit)? = null
     private val summaries = mutableListOf<() -> Unit>()
 
     private fun build() {
-        // ---------------- HOME: today, setup (if needed), your numbers
+        // ---------------- HOME
         val home = column()
         val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        topRow.addView(label("Locked In", 30f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val dateCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        dateCol.addView(label(SimpleDateFormat("EEEE", Locale.getDefault()).format(Date()), 34f, Ui.TEXT).apply { typeface = Ui.NUM })
+        dateCol.addView(label(SimpleDateFormat("d MMMM", Locale.getDefault()).format(Date()), 15f, Ui.MUTED))
+        topRow.addView(dateCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         topRow.addView(pill("⚙  Settings") { openSettings() })
         home.addView(topRow)
 
-        statusBox = card()
-        home.addView(statusBox, lp(20))
+        // The centrepiece: this week's learning
+        weekBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        home.addView(weekBox, lp(22))
+
+        statusBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        home.addView(statusBox, lp(12))
 
         brainBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         home.addView(brainBox, lp(12))
 
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        permTitle = label("Needs your attention", 18f, ORANGE, true).apply { setPadding(0, dp(24), 0, 0) }
+        permTitle = label("Needs your attention", 17f, Ui.EMBER, true).apply { setPadding(0, dp(26), 0, 0) }
         home.addView(permTitle)
         home.addView(permBox)
 
-        home.addView(label("Your progress", 18f, Color.WHITE, true).apply { setPadding(0, dp(28), 0, 0) })
+        home.addView(label("All time", 17f, Ui.TEXT, true).apply { setPadding(0, dp(28), 0, 0) })
         summaryBox = card()
         home.addView(summaryBox, lp(10))
 
-        moreLink = label("See all stats  ▾", 15f, ORANGE, true).apply {
+        moreLink = label("More stats", 15f, Ui.EMBER, true).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(14), 0, dp(6))
             setOnClickListener {
                 val open = detailWrap.visibility != android.view.View.VISIBLE
                 detailWrap.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
-                text = if (open) "Hide stats  ▴" else "See all stats  ▾"
+                text = if (open) "Fewer stats" else "More stats"
             }
         }
         home.addView(moreLink)
@@ -139,7 +148,7 @@ class MainActivity : Activity() {
         detailWrap.addView(histBox)
         home.addView(detailWrap)
 
-        home.addView(button("Start a session now", CARD) { confirmStart() }, lp(28))
+        home.addView(button("Start a session now", CARD) { confirmStart() }, lp(24))
         home.addView(label("Check for updates  ·  build ${Updater.currentBuild(this)}", 13f, MUTED).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(16), 0, dp(8))
@@ -178,6 +187,13 @@ class MainActivity : Activity() {
         lengthPicker(yt)
         textField(yt, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
         textField(yt, "YouTube Data API key (optional)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
+
+        // Weekly goal
+        val gl = group(set, "🎯  Weekly goal") {
+            if (p.dailyGoalMin <= 0) "Off" else "${Goal.hm(p.dailyGoalMin * 60.0)} a day = ${Goal.hm(Goal.weekTargetSec(p).toDouble())} a week"
+        }
+        gl.addView(label("All video watching counts. Fall behind and you can catch up. On Sunday the lock makes you finish what's left.", 13f, MUTED), lp(6))
+        goalPicker(gl)
 
         // 2. Schedule
         val sch = group(set, "⏰  When it locks") {
@@ -337,6 +353,27 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Daily goal: one tap. */
+    private fun goalPicker(col: LinearLayout) {
+        val opts = listOf(0 to "Off", 30 to "30 min a day", 60 to "1 hour a day", 90 to "1½ hours a day", 120 to "2 hours a day", 180 to "3 hours a day")
+        val chips = mutableListOf<TextView>()
+        fun paint() = chips.forEachIndexed { i, v ->
+            val on = opts[i].first == p.dailyGoalMin
+            v.background = rounded(if (on) 0xFF3A2A1C.toInt() else FIELD)
+            v.setTextColor(if (on) Color.WHITE else MUTED)
+            v.text = (if (on) "✓  " else "") + opts[i].second
+        }
+        for ((m, t) in opts) {
+            val c = label(t, 15f, Color.WHITE).apply {
+                setPadding(dp(14), dp(11), dp(14), dp(11))
+                setOnClickListener { p.dailyGoalMin = m; paint(); summaries.forEach { it() } }
+            }
+            chips.add(c)
+            col.addView(c, lp(6))
+        }
+        paint()
+    }
+
     /** Video length: one tap to choose. Used every morning. */
     private fun lengthPicker(col: LinearLayout) {
         col.addView(label("Video length", 13f, MUTED), lp(16))
@@ -381,6 +418,7 @@ class MainActivity : Activity() {
             title.contains("YouTubers") -> "youtubers"
             title.contains("locks") -> "schedule"
             title.contains("Scroll") -> "scroll"
+            title.contains("goal") -> "goal"
             else -> "messages"
         }] = { body.visibility = android.view.View.VISIBLE; chev.text = "⌄" }
         head.setOnClickListener {
@@ -407,7 +445,7 @@ class MainActivity : Activity() {
     }
 
     private fun scrollOf(v: android.view.View) = ScrollView(this).apply {
-        setBackgroundColor(Color.BLACK)
+        setBackgroundColor(Ui.BG)
         fitsSystemWindows = true
         addView(v)
     }
@@ -557,34 +595,31 @@ class MainActivity : Activity() {
 
     private fun card() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(14), dp(16), dp(14))
-        background = rounded(CARD)
+        setPadding(dp(18), dp(16), dp(18), dp(16))
+        background = rounded(CARD).apply { cornerRadius = dp(22).toFloat() }
     }
 
     private fun refreshStatus() {
         statusBox.removeAllViews()
         val doneToday = p.completedDay == Session.today()
         val work = Session.inWorkHours(p)
-        val (icon, head) = when {
-            !p.enabled -> "⏸" to "Locked In is off"
-            doneToday -> "✅" to "Done for today"
-            work -> "💼" to "Work hours: no lock"
-            else -> "⏳" to "Today's video: not done yet"
+        val (icon, head, color) = when {
+            !p.enabled -> Triple("⏸", "Locked In is off", MUTED)
+            doneToday -> Triple("✓", "Morning video done", Ui.TEAL)
+            work -> Triple("💼", "Work hours, no lock until ${Session.hhmm(p.workEndMin)}", MUTED)
+            else -> Triple("☀", "Morning video still to do", Ui.EMBER)
         }
-        statusBox.addView(label("$icon  $head", 22f, Color.WHITE, true))
-        val am = getSystemService(AlarmManager::class.java)
-        val next = am?.nextAlarmClock
-        val sub = when {
-            !p.enabled -> "Switch it on in Settings."
-            work && !doneToday -> "Your phone is free until ${Session.hhmm(p.workEndMin)}."
-            doneToday -> "Nice work. See you tomorrow morning."
-            next != null -> "Next alarm " + SimpleDateFormat("EEE h:mma", Locale.getDefault()).format(Date(next.triggerTime)).lowercase() +
-                ". The lock starts on your first unlock after it."
-            else -> "The lock starts on your first unlock between ${hour(p.windowStartHour)} and ${hour(p.windowEndHour)}."
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = rounded(CARD).apply { cornerRadius = dp(18).toFloat() }
         }
-        statusBox.addView(label(sub, 15f, MUTED), lp(6))
+        row.addView(label(icon, 18f, color, true).apply { setPadding(0, 0, dp(12), 0) })
+        row.addView(label(head, 16f, Ui.TEXT), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        statusBox.addView(row)
 
-        // Last 7 days → in "See all stats"
+        // Last 7 days → in "More stats"
         histBox.removeAllViews()
         val hist = Session.history(p).takeLast(7).reversed()
         if (hist.isNotEmpty()) {
@@ -598,6 +633,75 @@ class MainActivity : Activity() {
             }
             histBox.addView(c, lp(8))
         }
+    }
+
+    /** This week's learning: the ring, Mon–Sun dots, and Catch up when behind. */
+    private fun refreshWeek() {
+        weekBox.removeAllViews()
+        val hero = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1B2A44.toInt(), 0xFF132036.toInt())
+            ).apply { cornerRadius = dp(28).toFloat() }
+        }
+        if (!Goal.enabled(p)) {
+            hero.addView(label("Set a weekly goal", 22f, Ui.TEXT, true))
+            hero.addView(label("Pick how much you want to learn each day. Fall behind and you catch up.", 15f, MUTED), lp(6))
+            hero.addView(button("Choose a goal", Ui.EMBER) { openSettings("goal") }, lp(16))
+            weekBox.addView(hero); return
+        }
+        val target = Goal.weekTargetSec(p).toDouble()
+        val done = Goal.doneSec(this)
+        val behind = Goal.behindSec(this, p)
+        val catchUp = Goal.catchUpSec(this, p)
+        val remaining = Goal.remainingWeekSec(this, p)
+        val dow = Goal.dayOfWeek()
+        val hit = done >= target
+
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val ringColor = when { hit -> Ui.TEAL; behind >= 60 -> Ui.RED; else -> Ui.TEAL }
+        top.addView(ProgressRing(this).apply {
+            fraction = (done / target).toFloat()
+            color = ringColor
+            big = Goal.hm(done)
+            small = "of ${Goal.hm(target)}"
+        }, LinearLayout.LayoutParams(dp(150), dp(150)))
+        val side = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), 0, 0, 0) }
+        side.addView(label("This week", 15f, MUTED))
+        val (state, stateColor) = when {
+            hit -> "Goal hit" to Ui.TEAL
+            behind >= 60 -> "${Goal.hm(behind)} behind" to Ui.RED
+            else -> "On track" to Ui.TEAL
+        }
+        side.addView(label(state, 26f, stateColor).apply { typeface = Ui.NUM }, lp(2))
+        side.addView(label("${Goal.hm(p.dailyGoalMin * 60.0)} a day", 14f, MUTED), lp(2))
+        if (!hit && dow == 7) side.addView(label("Last day: ${Goal.hm(remaining)} left, and the lock won't let it slide.", 13f, Ui.TEXT), lp(8))
+        top.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        hero.addView(top)
+
+        hero.addView(WeekDots(this).apply {
+            values = Goal.perDay(this@MainActivity).map { (it / (p.dailyGoalMin * 60.0)).toFloat() }
+            today = dow
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) })
+
+        if (!hit && catchUp >= 5 * 60 && behind >= 60) {
+            val amount = catchUp.toInt()
+            hero.addView(button("Catch up ${Goal.hm(amount.toDouble())}", Ui.EMBER) {
+                if (Session.inWorkHours(p)) { toast("It's work hours. Catch up after ${Session.hhmm(p.workEndMin)}."); return@button }
+                AlertDialog.Builder(this)
+                    .setTitle("Catch up ${Goal.hm(amount.toDouble())}?")
+                    .setMessage("Your phone locks into videos and quizzes until you've watched ${Goal.hm(amount.toDouble())}: one long video or several back to back.")
+                    .setPositiveButton("Start") { _, _ ->
+                        savers.forEach { it() }
+                        Session.startCatchUp(this, amount)
+                        finish()
+                    }
+                    .setNegativeButton("Not now", null)
+                    .show()
+            }, lp(16))
+        }
+        weekBox.addView(hero)
     }
 
     private fun refreshBrain() {
@@ -615,7 +719,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         for ((v, n) in listOf(Stats.hours(watch.values.sum()) to "watched", avg to "quiz average", "${streak()}" to "day streak")) {
             val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            c.addView(label(v, 26f, Color.WHITE, true))
+            c.addView(label(v, 28f, Ui.TEXT).apply { typeface = Ui.NUM })
             c.addView(label(n, 13f, MUTED))
             row.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
