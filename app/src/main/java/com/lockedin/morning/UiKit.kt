@@ -47,6 +47,9 @@ class ProgressRing(ctx: Context) : View(ctx) {
         val f = fraction.coerceIn(0f, 1f)
         if (f > 0f) c.drawArc(box, -90f, (f * 360f).coerceAtLeast(6f), false, arc)
         bigP.textSize = if (emoji) s * 0.30f else s * 0.26f
+        val maxW = box.width() - sw * 1.6f
+        val w = bigP.measureText(big)
+        if (w > maxW && w > 0f) bigP.textSize *= maxW / w
         c.drawText(big, width / 2f, height / 2f + (if (small.isEmpty()) s * 0.09f else s * 0.03f), bigP)
         if (small.isNotEmpty()) {
             smallP.textSize = s * 0.095f
