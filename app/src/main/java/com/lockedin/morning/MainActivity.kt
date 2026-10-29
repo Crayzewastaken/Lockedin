@@ -69,6 +69,9 @@ class MainActivity : Activity() {
         refreshStatus()
         refreshSummary()
         refreshDashboard()
+        Updater.refreshLatest(this) { refreshPerms() }
+        // The accessibility service can take a moment to connect after the app starts.
+        permBox.postDelayed({ if (!isFinishing) refreshPerms() }, 2500)
     }
 
     // ------------------------------------------------------------------ layout: home + settings
@@ -95,7 +98,7 @@ class MainActivity : Activity() {
         home.addView(statusBox, lp(20))
 
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        permTitle = label("Finish setup", 18f, ORANGE, true).apply { setPadding(0, dp(24), 0, 0) }
+        permTitle = label("Needs your attention", 18f, ORANGE, true).apply { setPadding(0, dp(24), 0, 0) }
         home.addView(permTitle)
         home.addView(permBox)
 
@@ -259,8 +262,11 @@ class MainActivity : Activity() {
 
     private fun hour(h: Int): String = Session.hhmm((h % 24) * 60).let { if (h == 24) "midnight" else it }
 
-    private fun openSettings() {
+    private val groupOpeners = HashMap<String, () -> Unit>()
+
+    private fun openSettings(section: String? = null) {
         inSettings = true
+        section?.let { groupOpeners[it]?.invoke() }
         summaries.forEach { it() }
         setContentView(settingsView)
         settingsView.scrollTo(0, 0)
@@ -324,6 +330,13 @@ class MainActivity : Activity() {
         box.addView(head)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE; setPadding(0, dp(6), 0, dp(4)) }
         box.addView(body)
+        groupOpeners[when {
+            title.contains("Quiz") -> "quiz"
+            title.contains("YouTubers") -> "youtubers"
+            title.contains("locks") -> "schedule"
+            title.contains("Scroll") -> "scroll"
+            else -> "messages"
+        }] = { body.visibility = android.view.View.VISIBLE; chev.text = "⌄" }
         head.setOnClickListener {
             val open = body.visibility != android.view.View.VISIBLE
             body.visibility = if (open) android.view.View.VISIBLE else android.view.View.GONE
@@ -611,11 +624,28 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         }
+        // Switched on but not actually running (Android sometimes stops it after an update).
+        if (accessOn && EnforcerService.instance == null) {
+            permRow("Restart Accessibility", "It's on but not running. Turn Locked In off, then on again.", false) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        // Quiz makers switched on without a key.
+        if (p.useGemini && p.geminiKey.isBlank())
+            permRow("Add your Gemini key", "Free at aistudio.google.com/apikey, then paste it in Settings → Quiz.", false) { openSettings("quiz") }
+        if (p.useOpenRouter && p.openRouterKey.isBlank())
+            permRow("Add your OpenRouter key", "Free at openrouter.ai/keys, or switch OpenRouter off in Settings → Quiz.", false) { openSettings("quiz") }
+        if (p.useClaude && p.claudeKey.isBlank())
+            permRow("Add your Claude key", "Or switch Claude off in Settings → Quiz.", false) { openSettings("quiz") }
+        // A newer build is out.
+        val latest = Updater.latestKnown(this)
+        if (latest > Updater.currentBuild(this))
+            permRow("Update available: build $latest", "You have build ${Updater.currentBuild(this)}. Tap to update.", false) { Updater.check(this) }
         if (!Quiz.hasProvider(p) && !p.useBuiltIn) {
             permBox.addView(label("No quiz maker is on. Open Settings → Quiz and switch one on, or you'll write a summary instead of a quiz.", 13f, RED), lp(10))
         }
         val allDone = permBox.childCount == 0
-        permTitle?.text = "Finish setup"
+        permTitle?.text = if (permBox.childCount == 1) "Needs your attention (1)" else "Needs your attention (${permBox.childCount})"
         permTitle?.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
         permBox.visibility = if (allDone) android.view.View.GONE else android.view.View.VISIBLE
     }

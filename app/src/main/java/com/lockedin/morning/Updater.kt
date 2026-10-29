@@ -49,6 +49,21 @@ object Updater {
         return Release(build, url)
     }
 
+    /** Quietly look for a newer build (at most every 30 min); [done] runs on the main thread. */
+    fun refreshLatest(act: Activity, done: () -> Unit) {
+        val sp = act.getSharedPreferences("lockedin", Context.MODE_PRIVATE)
+        if (System.currentTimeMillis() - sp.getLong("latestCheckedAt", 0L) < 30 * 60_000L) return
+        sp.edit().putLong("latestCheckedAt", System.currentTimeMillis()).apply()
+        Thread {
+            val r = try { latest() } catch (_: Exception) { null }
+            if (r != null) sp.edit().putInt("latestBuild", r.build).apply()
+            act.runOnUiThread { if (!act.isFinishing) done() }
+        }.start()
+    }
+
+    fun latestKnown(ctx: Context): Int =
+        ctx.getSharedPreferences("lockedin", Context.MODE_PRIVATE).getInt("latestBuild", 0)
+
     fun check(act: Activity) {
         Toast.makeText(act, "Checking for updates…", Toast.LENGTH_SHORT).show()
         Thread {
