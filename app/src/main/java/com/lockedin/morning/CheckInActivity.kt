@@ -90,6 +90,8 @@ class CheckInActivity : Activity() {
         col.addView(label("$minutes min on $name", 15f, ORANGE, true))
         col.addView(label("Were you just doom scrolling?", 30f, Color.WHITE, true), lp(10))
         col.addView(label("Either way, it's quiz time on your past videos. Pass it to carry on.", 15f, MUTED), lp(10))
+        Scroll.flush(this)
+        col.addView(BrainMeter.card(this, p, compact = true), lp(20))
         col.addView(button("Yes", CARD) { doom = "yes"; Stats.inc(this, "doomYes"); startQuiz() }, lp(28))
         col.addView(button("No", CARD) { doom = "no"; Stats.inc(this, "doomNo"); startQuiz() }, lp(10))
         show(col)

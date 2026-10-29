@@ -179,6 +179,10 @@ cat > stats.xml <<'XML'
 XML
 adb push lockedin2.xml /data/local/tmp/lockedin.xml
 adb push stats.xml /data/local/tmp/stats.xml
+printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "    <string name=\"time\">{&quot;$TODAY&quot;:{&quot;com.instagram.android&quot;:1800,&quot;com.zhiliaoapp.musically&quot;:900}}</string>" "</map>" > scroll.xml
+adb push scroll.xml /data/local/tmp/scroll.xml
+adb shell cp /data/local/tmp/scroll.xml /data/data/$PKG/shared_prefs/scroll.xml
+adb shell chmod 660 /data/data/$PKG/shared_prefs/scroll.xml
 adb shell cp /data/local/tmp/lockedin.xml /data/data/$PKG/shared_prefs/lockedin.xml
 adb shell cp /data/local/tmp/stats.xml /data/data/$PKG/shared_prefs/stats.xml
 adb shell chown -R $APPUID:$APPUID /data/data/$PKG/shared_prefs

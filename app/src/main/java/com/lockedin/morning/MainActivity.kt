@@ -80,6 +80,7 @@ class MainActivity : Activity() {
         refreshStatus()
         refreshSummary()
         refreshDashboard()
+        refreshBrain()
         Updater.refreshLatest(this) { refreshPerms() }
         // The accessibility service can take a moment to connect after the app starts.
         permBox.postDelayed({ if (!isFinishing) refreshPerms() }, 2500)
@@ -94,6 +95,7 @@ class MainActivity : Activity() {
     private lateinit var histBox: LinearLayout
     private lateinit var moreLink: TextView
     private var inSettings = false
+    private lateinit var brainBox: LinearLayout
     private var liveTicker: (() -> Unit)? = null
     private val summaries = mutableListOf<() -> Unit>()
 
@@ -107,6 +109,9 @@ class MainActivity : Activity() {
 
         statusBox = card()
         home.addView(statusBox, lp(20))
+
+        brainBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        home.addView(brainBox, lp(12))
 
         permBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         permTitle = label("Needs your attention", 18f, ORANGE, true).apply { setPadding(0, dp(24), 0, 0) }
@@ -245,6 +250,7 @@ class MainActivity : Activity() {
                 .putExtra(CheckInActivity.EXTRA_APP, "com.instagram.android")
                 .putExtra(CheckInActivity.EXTRA_MIN, p.scrollMinMin))
         }, lp(8))
+        intField(scrollBox, "Daily scrolling limit for the brain meter (minutes)", p.scrollLimitMin) { p.scrollLimitMin = it.coerceIn(5, 600) }
         intField(scrollBox, "Check in after at least (minutes)", p.scrollMinMin) { p.scrollMinMin = it.coerceIn(1, 120) }
         intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
         intField(scrollBox, "Quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
@@ -592,6 +598,11 @@ class MainActivity : Activity() {
             }
             histBox.addView(c, lp(8))
         }
+    }
+
+    private fun refreshBrain() {
+        brainBox.removeAllViews()
+        if (p.scrollEnabled) brainBox.addView(BrainMeter.card(this, p))
     }
 
     /** The simple home numbers: watched, quiz average, streak, and per-YouTuber time. */
