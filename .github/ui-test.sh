@@ -130,13 +130,19 @@ fi
 adb shell input keyevent KEYCODE_BACK
 sleep 2
 # dashboard again, now with a logged check-in
+adb shell am force-stop $PKG
 adb shell am start -n $PKG/.MainActivity
-sleep 3
-for i in 1 2; do
-  adb shell input swipe 540 1900 540 700 400
-  sleep 1
-done
+sleep 4
+adb shell input swipe 540 1900 540 600 400
+sleep 1
 adb exec-out screencap -p > $OUT/10-dashboard-scrolling.png
+adb shell input swipe 540 1900 540 600 400
+sleep 1
+adb exec-out screencap -p > $OUT/10b-dashboard-scrolling.png
+for i in 1 2 3 4; do adb shell input swipe 540 1900 540 600 300; sleep 1; done
+adb exec-out screencap -p > $OUT/11-settings-checkins.png
+adb shell input swipe 540 1900 540 600 300; sleep 1
+adb exec-out screencap -p > $OUT/11b-settings-checkins.png
 
 adb logcat -d > $OUT/logcat-full.txt
 grep -E "FATAL|AndroidRuntime|$PKG" $OUT/logcat-full.txt | head -200 > $OUT/logcat-app.txt
