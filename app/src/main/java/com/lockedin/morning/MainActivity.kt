@@ -493,6 +493,7 @@ class MainActivity : Activity() {
         val next = am?.nextAlarmClock
         val sub = when {
             !p.enabled -> "Switch it on in Settings."
+            work && !doneToday -> "Your phone is free until ${Session.hhmm(p.workEndMin)}."
             doneToday -> "Nice work. See you tomorrow morning."
             next != null -> "Next alarm " + SimpleDateFormat("EEE h:mma", Locale.getDefault()).format(Date(next.triggerTime)).lowercase() +
                 ". The lock starts on your first unlock after it."
@@ -564,25 +565,24 @@ class MainActivity : Activity() {
         val batteryOn = getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) == true
 
         if (Build.VERSION.SDK_INT >= 33 && (!accessOn || !notifOn)) {
-            permBox.addView(label("Android blocks Accessibility and Notification access for apps installed outside the Play Store until you allow it: tap below → ⋮ menu (top right) → \"Allow restricted settings\". If you don't see that option, try Accessibility first, then come back.", 13f, MUTED), lp(8))
-            permBox.addView(button("Open app info (allow restricted settings)", CARD) {
+            permRow("First: allow restricted settings", "App info → ⋮ (top right) → Allow restricted settings.", false) {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-            }, lp(6))
+            }
         }
 
-        permRow("Display over other apps", "Lets the lock open on top of whatever you're doing.", overlayOn) {
+        permRow("Display over other apps", "So the lock can open over other apps.", overlayOn) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
-        permRow("Accessibility: Locked In", "Detects your unlock and brings the video back if you leave it. Settings → Accessibility → Locked In → On.", accessOn) {
+        permRow("Accessibility", "Spots your unlock and keeps you on the video.", accessOn) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        permRow("Notification access", "Lets Messenger/SMS open only when a new message actually arrives.", notifOn) {
+        permRow("Notification access", "So messages can still get through.", notifOn) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
-        permRow("Show notifications", "For the break countdown.", postOn) {
+        permRow("Show notifications", "For the break timer.", postOn) {
             if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        permRow("Unrestricted battery", "Stops Android from killing the lock overnight.", batteryOn) {
+        permRow("Unrestricted battery", "So Android doesn't switch the lock off.", batteryOn) {
             try {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             } catch (_: Exception) {

@@ -165,7 +165,7 @@ sleep 1.5
 adb exec-out screencap -p > $OUT/6-settings.png
 adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
 adb pull /data/local/tmp/ui.xml $OUT/ui-settings.xml >/dev/null 2>&1
-tap_text "📺  YouTubers &amp; videos" $OUT/ui-settings.xml
+tap_text "&#128250;  YouTubers &amp; videos" $OUT/ui-settings.xml
 sleep 1.5
 adb exec-out screencap -p > $OUT/6b-settings-youtubers.png
 adb shell input keyevent KEYCODE_BACK
