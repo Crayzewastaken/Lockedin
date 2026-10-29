@@ -212,10 +212,10 @@ class MainActivity : Activity() {
 
         // 4. Scroll check-ins
         val sc = group(set, "📱  Scroll check-ins") {
-            if (!p.scrollEnabled) "Off" else "Every ${p.scrollMinMin}–${p.scrollMaxMin} min · ${p.recallQuestions}-question quiz"
+            if (!p.scrollEnabled) "Off" else "Every ${p.scrollMinMin}–${p.scrollMaxMin} min · ${p.recallQuestions} questions · pass ${p.recallPassPercent}%"
         }
         val scrollBox = providerBox(sc, "Quiz me while I scroll", p.scrollEnabled) { p.scrollEnabled = it }
-        scrollBox.addView(label("After ${p.scrollMinMin}–${p.scrollMaxMin} min in Instagram or TikTok, you get a short forced quiz on earlier videos. Questions saved so far: ${Bank.size(this)}.", 13f, MUTED), lp(6))
+        scrollBox.addView(label("After ${p.scrollMinMin}–${p.scrollMaxMin} min in Instagram or TikTok: \"Were you just doom scrolling?\" then a forced quiz on earlier videos. Score the pass mark to carry on, or redo it. Questions saved so far: ${Bank.size(this)}.", 13f, MUTED), lp(6))
         val live = label("", 13f, ORANGE)
         scrollBox.addView(live, lp(8))
         val accessOk = (Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "").contains("$packageName/")
@@ -239,6 +239,7 @@ class MainActivity : Activity() {
         intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
         intField(scrollBox, "Quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
         intField(scrollBox, "Quiz time limit (minutes)", p.recallSeconds / 60) { p.recallSeconds = it.coerceIn(1, 30) * 60 }
+        intField(scrollBox, "Pass mark (%) — below this you redo the quiz", p.recallPassPercent) { p.recallPassPercent = it.coerceIn(10, 100) }
         textField(scrollBox, "Apps to watch (package names)", p.scrollApps, multi = true) { p.scrollApps = it.replace("\n", ",") }
         scrollBox.addView(label("Instagram = com.instagram.android · TikTok = com.zhiliaoapp.musically · YouTube = com.google.android.youtube · Facebook = com.facebook.katana", 12f, MUTED), lp(4))
 
@@ -478,6 +479,8 @@ class MainActivity : Activity() {
             val rq = st.optInt("recallQuestions")
             stat(r2, if (rq > 0) "${st.optInt("recallCorrect") * 100 / rq}%" else "–", "recall score")
             sc.addView(r2, lp(10))
+            val dy = st.optInt("doomYes"); val dn = st.optInt("doomNo")
+            if (dy + dn > 0) sc.addView(label("You said you were doom scrolling $dy of ${dy + dn} times.", 13f, MUTED), lp(8))
             val recent = Scroll.log(this).takeLast(3).reversed()
             if (recent.isNotEmpty()) {
                 sc.addView(label("Recent answers", 12f, MUTED), lp(10))

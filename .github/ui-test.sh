@@ -171,23 +171,17 @@ adb exec-out screencap -p > $OUT/6b-settings-youtubers.png
 adb shell input keyevent KEYCODE_BACK
 sleep 1
 
-# ---- Scroll check-in screen
+# ---- Scroll check-in: "doom scrolling?" (no saved questions yet → breather)
 adb shell am start -n $PKG/.CheckInActivity --es app com.instagram.android --ei min 17
 sleep 3
-adb exec-out screencap -p > $OUT/8-checkin.png
-# pick "Nothing really" (last option) to show the 10-second wait
+adb exec-out screencap -p > $OUT/8-checkin-ask.png
 adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
 adb pull /data/local/tmp/ui.xml $OUT/ui-checkin.xml >/dev/null 2>&1
-B=$(grep -oE 'text="[^"]*Nothing really[^"]*"[^>]*bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' $OUT/ui-checkin.xml | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -1)
-if [ -n "$B" ]; then
-  X1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\1/'); Y1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\2/')
-  X2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\3/'); Y2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\4/')
-  adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
-  sleep 2
-  adb exec-out screencap -p > $OUT/9-checkin-nothing.png
-fi
-adb shell input keyevent KEYCODE_BACK
+tap_text "Yes" $OUT/ui-checkin.xml
 sleep 2
+adb exec-out screencap -p > $OUT/9-checkin-noquestions.png
+adb shell am force-stop $PKG
+sleep 1
 # ---- Recall quiz (seed 3 questions "from yesterday")
 YDAY=$(date -d yesterday +%F)
 cat > bank.xml <<XML
@@ -204,6 +198,10 @@ adb shell chmod 660 /data/data/$PKG/shared_prefs/bank.xml
 adb shell restorecon -R /data/data/$PKG/shared_prefs || true
 adb shell am start -n $PKG/.CheckInActivity --es app com.instagram.android --ei min 18
 sleep 3
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-ask2.xml >/dev/null 2>&1
+tap_text "No" $OUT/ui-ask2.xml
+sleep 2
 adb exec-out screencap -p > $OUT/12-recall-q1.png
 
 tap_first_option() {
@@ -223,6 +221,11 @@ sleep 1.5
 tap_first_option; sleep 1.5
 tap_first_option; sleep 2
 adb exec-out screencap -p > $OUT/13-recall-result.png
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-result.xml >/dev/null 2>&1
+tap_text "Try again" $OUT/ui-result.xml
+sleep 2
+adb exec-out screencap -p > $OUT/13b-recall-tryagain.png
 # back button should NOT work mid-quiz, but works on the result screen
 adb shell input keyevent KEYCODE_BACK
 sleep 2

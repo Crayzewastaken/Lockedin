@@ -76,6 +76,7 @@ class Prefs(ctx: Context) {
     var scrollMaxMin by int(20)
     var recallQuestions by int(5)
     var recallSeconds by int(300)
+    var recallPassPercent by int(70)
     var recallActive by bool(false)
     var recallUntil by long(0L)
     var recallApp by str("")
