@@ -60,56 +60,60 @@ object YouTube {
 
     // ------------------------------------------------------------------ pick
 
-    fun pick(ctx: Context, p: Prefs): Picked {
+    fun channelList(p: Prefs): List<String> =
+        p.channels.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** Videos (not yet watched) from the chosen channels within the length range, unverified. */
+    fun candidates(p: Prefs, channels: List<String>, minSec: Int, maxSec: Int, count: Int): List<Candidate> {
         val pool = loadPool(p)
         val extras = extraIds(p.extraVideoUrls).map { Candidate(it, "", "", 0) }
-        val all = (extras + pool).distinctBy { it.id }
-        if (all.isEmpty()) throw Exception("No videos found for: ${p.channels}")
-
+        val inChannels = pool.filter { c -> channels.isEmpty() || channels.any { matches(c.author, it) } }
+        val all = (extras + inChannels).distinctBy { it.id }
+            .filter { it.lengthSec == 0 || it.lengthSec in minSec..maxSec }
+        if (all.isEmpty()) return emptyList()
         val watched = Session.watchedSet(p).toSet()
-        var candidates = all.filter { it.id !in watched }.shuffled()
-        if (candidates.isEmpty()) {
-            // Watched everything — start the rotation again.
-            p.watchedIds = ""
-            candidates = all.shuffled()
-        }
+        var fresh = all.filter { it.id !in watched }
+        if (fresh.isEmpty()) fresh = all // watched them all: start the rotation again
+        // Known lengths first (they can be shown in the list), random order within.
+        return fresh.shuffled().sortedBy { if (it.lengthSec > 0 && it.title.isNotEmpty()) 0 else 1 }.take(count)
+    }
 
-        val minSec = p.minMinutes * 60
-        val maxSec = p.maxMinutes * 60
-        var fallback: Candidate? = null
+    /** Checks a video can play here and has captions. Throws with the reason if not. */
+    fun verify(c: Candidate, minSec: Int, maxSec: Int): Picked {
+        val player = playerInfo(c.id)
+        if (player == null) {
+            // YouTube blocked the lookup; if we already know the length, play it anyway (quiz → summary).
+            if (c.lengthSec in minSec..maxSec) return Picked(c.id, c.title, c.author, c.lengthSec, "")
+            throw Exception("couldn't read video details")
+        }
+        val ps = player.optJSONObject("playabilityStatus")
+        if (ps == null || ps.optString("status") != "OK") throw Exception("video not playable")
+        if (ps.has("playableInEmbed") && !ps.optBoolean("playableInEmbed", true)) throw Exception("video can't be embedded")
+        val details = player.optJSONObject("videoDetails") ?: throw Exception("no video details")
+        if (details.optBoolean("isLive", false) || details.optBoolean("isUpcoming", false)) throw Exception("live stream")
+        val len = details.optString("lengthSeconds").toIntOrNull() ?: 0
+        if (len < minSec || len > maxSec) throw Exception("wrong length")
+        val transcript = try { transcript(player) } catch (_: Exception) { null }
+        if (transcript == null || transcript.length < 1500) throw Exception("no captions")
+        return Picked(c.id, details.optString("title", c.title), details.optString("author", c.author), len, transcript)
+    }
+
+    /** "Surprise me": first video that passes [verify]. */
+    fun pick(ctx: Context, p: Prefs, channels: List<String> = channelList(p), minSec: Int = p.minMinutes * 60, maxSec: Int = p.maxMinutes * 60): Picked {
+        val list = candidates(p, channels, minSec, maxSec, 14)
+        if (list.isEmpty()) throw Exception("No videos found for ${channels.joinToString()} at that length")
         var lastProblem = "no candidate worked"
-
-        for (c in candidates.take(14)) {
-            if (c.lengthSec > 0 && (c.lengthSec < minSec || c.lengthSec > maxSec)) continue
-            val player = playerInfo(c.id)
-            if (player == null) {
-                if (fallback == null && c.lengthSec in minSec..maxSec) fallback = c
-                lastProblem = "couldn't read video details"
-                continue
+        var fallback: Picked? = null
+        for (c in list) {
+            try {
+                val v = verify(c, minSec, maxSec)
+                if (v.transcript.isNotEmpty()) return v
+                if (fallback == null) fallback = v
+            } catch (e: Exception) {
+                lastProblem = e.message ?: lastProblem
             }
-            val ps = player.optJSONObject("playabilityStatus")
-            if (ps == null || ps.optString("status") != "OK") { lastProblem = "video not playable"; continue }
-            if (ps.has("playableInEmbed") && !ps.optBoolean("playableInEmbed", true)) {
-                lastProblem = "video can't be embedded"; continue
-            }
-            val details = player.optJSONObject("videoDetails") ?: continue
-            if (details.optBoolean("isLive", false) || details.optBoolean("isUpcoming", false)) continue
-            val len = details.optString("lengthSeconds").toIntOrNull() ?: 0
-            if (len < minSec || len > maxSec) { lastProblem = "wrong length"; continue }
-            val transcript = try { transcript(player) } catch (_: Exception) { null }
-            if (transcript == null || transcript.length < 1500) { lastProblem = "no captions"; continue }
-            return Picked(
-                c.id,
-                details.optString("title", c.title),
-                details.optString("author", c.author),
-                len,
-                transcript,
-            )
         }
-
-        // YouTube blocked the details lookup but we know a video of the right length:
-        // play it anyway; the quiz falls back to a written reflection.
-        fallback?.let { return Picked(it.id, it.title, it.author, it.lengthSec, "") }
+        fallback?.let { return it }
         throw Exception("Couldn't find a usable video ($lastProblem)")
     }
 
@@ -131,12 +135,13 @@ object YouTube {
     // ------------------------------------------------------------------ pool
 
     private fun loadPool(p: Prefs): List<Candidate> {
+        if (p.sp.getInt("poolVer", 0) < 2) { p.poolFetchedAt = 0L; p.sp.edit().putInt("poolVer", 2).apply() }
         val fresh = System.currentTimeMillis() - p.poolFetchedAt < 5L * 24 * 3600 * 1000
         if (fresh && p.poolJson.isNotEmpty()) {
             val cached = parsePool(p.poolJson)
             if (cached.isNotEmpty()) return cached
         }
-        val names = p.channels.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val names = channelList(p)
         val found = mutableListOf<Candidate>()
         for (name in names) {
             val list = try {
@@ -146,9 +151,9 @@ object YouTube {
             }
             found.addAll(list)
         }
+        // Keep everything 30+ min (up to 4 h); the morning chooser narrows the length.
         val minSec = p.minMinutes * 60
-        val maxSec = p.maxMinutes * 60
-        val filtered = found.filter { it.lengthSec == 0 || it.lengthSec in minSec..maxSec }.distinctBy { it.id }
+        val filtered = found.filter { it.lengthSec == 0 || it.lengthSec in minSec..4 * 3600 }.distinctBy { it.id }
         if (filtered.isNotEmpty()) {
             p.poolJson = poolToJson(filtered)
             p.poolFetchedAt = System.currentTimeMillis()
@@ -176,10 +181,12 @@ object YouTube {
 
     /** Search YouTube (videos over 20 minutes) and keep results uploaded by this channel. */
     private fun searchVideos(name: String, p: Prefs): List<Candidate> {
-        val queries = listOf(
+        val all = listOf(
             name, "$name podcast", "$name full", "$name masterclass",
             "$name training", "$name workshop", "$name interview", "$name 2026",
         )
+        // Fewer searches per channel when you follow a lot of channels.
+        val queries = if (channelList(p).size > 3) all.take(4) else all
         val out = mutableListOf<Candidate>()
         for (q in queries) {
             val body = JSONObject()
@@ -208,7 +215,7 @@ object YouTube {
                 val id = r.optString("videoId")
                 if (id.length != 11) continue
                 val owner = text(r.optJSONObject("ownerText")).ifEmpty { text(r.optJSONObject("longBylineText")) }
-                if (!sameChannel(owner, name)) continue
+                if (!matches(owner, name)) continue
                 val len = parseClock(text(r.optJSONObject("lengthText")))
                 out.add(Candidate(id, text(r.optJSONObject("title")), owner, len))
             }
@@ -216,7 +223,7 @@ object YouTube {
         return out
     }
 
-    private fun sameChannel(owner: String, name: String): Boolean {
+    fun matches(owner: String, name: String): Boolean {
         val o = owner.lowercase().replace(" ", "")
         val n = name.lowercase().replace(" ", "")
         return o.isNotEmpty() && (o == n || o.contains(n) || n.contains(o))

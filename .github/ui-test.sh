@@ -78,6 +78,48 @@ adb shell settings put system user_rotation 0
 sleep 4
 shot 4-portrait-again
 
+# ---- Morning chooser (session just started, nothing picked yet)
+adb shell am force-stop $PKG
+cat > lockedin3.xml <<XML
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="active" value="true" />
+    <string name="phase">PICKING</string>
+    <string name="sessionDay">$TODAY</string>
+    <boolean name="pickChosen" value="false" />
+    <string name="channels">Alex Hormozi, Jeremy Miner, Codie Sanchez</string>
+    <boolean name="workEnabled" value="false" />
+    <boolean name="uiTestMode" value="true" />
+</map>
+XML
+adb push lockedin3.xml /data/local/tmp/lockedin.xml
+adb shell cp /data/local/tmp/lockedin.xml /data/data/$PKG/shared_prefs/lockedin.xml
+adb shell chown -R $APPUID:$APPUID /data/data/$PKG/shared_prefs
+adb shell am start -n $PKG/.LockActivity
+sleep 4
+adb exec-out screencap -p > $OUT/14-chooser.png
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-chooser.xml >/dev/null 2>&1
+tap_text() {
+  B=$(grep -oE "text=\"$1\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" $2 | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -1)
+  if [ -n "$B" ]; then
+    X1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\1/'); Y1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\2/')
+    X2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\3/'); Y2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\4/')
+    adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
+  fi
+}
+tap_text "Codie Sanchez" $OUT/ui-chooser.xml
+tap_text "45–60 min" $OUT/ui-chooser.xml
+sleep 1
+adb exec-out screencap -p > $OUT/14b-chooser-selected.png
+adb shell input swipe 540 1900 540 900 300
+sleep 1
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-chooser2.xml >/dev/null 2>&1
+tap_text "Show me videos" $OUT/ui-chooser2.xml
+sleep 25
+adb exec-out screencap -p > $OUT/15-video-list.png
+
 # ---- Settings + dashboard (no session running; Gemini on, OpenRouter + Claude off; sample stats)
 adb shell am force-stop $PKG
 cat > lockedin2.xml <<XML

@@ -190,11 +190,149 @@ class LockActivity : Activity() {
 
     // ------------------------------------------------------------------ picking
 
+    // ------------------------------------------------------------------ choose today's video
+
+    private data class Len(val label: String, val min: Int, val max: Int)
+
+    private fun lengthOptions(): List<Len> {
+        val floor = p.minMinutes.coerceAtLeast(1)
+        val raw = listOf(Len("30–45 min", 30, 45), Len("45–60 min", 45, 60), Len("1–1.5 hours", 60, 90), Len("1.5 hours +", 90, 240))
+        val list = raw.filter { it.max > floor }.map { if (it.min < floor) it.copy(label = "$floor–${it.max} min", min = floor) else it }
+        return list + Len("Any length", floor, 240)
+    }
+
+    private fun chosenChannels(): List<String> {
+        val all = YouTube.channelList(p)
+        val picked = p.pickChannels.split(",").map { it.trim() }.filter { it in all }
+        return picked.ifEmpty { all }
+    }
+
+    private fun showChooser() {
+        clear(Session.PICKING)
+        val all = YouTube.channelList(p)
+        val selected = chosenChannels().toMutableSet()
+        val lens = lengthOptions()
+        var lenIdx = lens.indexOfFirst { it.min * 60 == p.pickMinSec && it.max * 60 == p.pickMaxSec }.let { if (it < 0) 0 else it }
+
+        val col = column(center = false)
+        col.addView(label("Good morning.", 30f, Color.WHITE, bold = true))
+        col.addView(label("Choose today's video.", 17f, MUTED), lp(top = 4))
+
+        col.addView(label("Who", 15f, ORANGE, bold = true), lp(top = 24))
+        val whoChips = mutableListOf<TextView>()
+        fun paintWho() = whoChips.forEachIndexed { i, v -> v.background = rounded(if (all[i] in selected) 0xFF3A2A1C.toInt() else CARD); v.setTextColor(if (all[i] in selected) Color.WHITE else MUTED) }
+        for (name in all) {
+            val chip = label(name, 15f, Color.WHITE).apply {
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+                setOnClickListener {
+                    if (name in selected) { if (selected.size > 1) selected.remove(name) } else selected.add(name)
+                    paintWho()
+                }
+            }
+            whoChips.add(chip)
+            col.addView(chip, lp(top = 8))
+        }
+        paintWho()
+
+        col.addView(label("How long", 15f, ORANGE, bold = true), lp(top = 24))
+        val lenChips = mutableListOf<TextView>()
+        fun paintLen() = lenChips.forEachIndexed { i, v -> v.background = rounded(if (i == lenIdx) 0xFF3A2A1C.toInt() else CARD); v.setTextColor(if (i == lenIdx) Color.WHITE else MUTED) }
+        lens.forEachIndexed { i, l ->
+            val chip = label(l.label, 15f, Color.WHITE).apply {
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+                setOnClickListener { lenIdx = i; paintLen() }
+            }
+            lenChips.add(chip)
+            col.addView(chip, lp(top = 8))
+        }
+        paintLen()
+
+        fun saveChoice() {
+            p.pickChannels = selected.joinToString(",")
+            p.pickMinSec = lens[lenIdx].min * 60
+            p.pickMaxSec = lens[lenIdx].max * 60
+        }
+        col.addView(button("Show me videos", ORANGE) { saveChoice(); showVideoList() }, lp(top = 28))
+        col.addView(button("Surprise me", CARD) {
+            saveChoice()
+            p.pickChosen = true
+            showPicking()
+        }, lp(top = 10))
+        val emergency = label("Emergency exit", 12f, 0xFF66666C.toInt())
+        emergency.gravity = Gravity.CENTER
+        emergency.setOnClickListener { showEmergencyDialog() }
+        col.addView(emergency, lp(top = 28))
+        root.addView(scroll(col))
+    }
+
+    private fun showVideoList() {
+        clear(Session.PICKING)
+        val col = column(center = false)
+        col.addView(label("Pick one", 28f, Color.WHITE, bold = true))
+        col.addView(label("${chosenChannels().joinToString()} · ${lengthOptions().firstOrNull { it.min * 60 == p.pickMinSec && it.max * 60 == p.pickMaxSec }?.label ?: ""}", 14f, MUTED), lp(top = 4))
+        val status = label("Finding videos…", 15f, MUTED)
+        col.addView(status, lp(top = 16))
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(listBox)
+        col.addView(button("Show different videos", CARD) { showVideoList() }, lp(top = 20))
+        col.addView(button("Back", CARD) { showChooser() }, lp(top = 10))
+        root.addView(scroll(col))
+
+        val chans = chosenChannels()
+        val minS = p.pickMinSec
+        val maxS = p.pickMaxSec
+        io.execute {
+            val list = try { YouTube.candidates(p, chans, minS, maxS, 5) } catch (_: Exception) { emptyList() }
+            ui.post {
+                if (isFinishing || screen != Session.PICKING) return@post
+                if (list.isEmpty()) {
+                    status.text = "No videos found for that. Try another length or more YouTubers (or check your internet)."
+                    return@post
+                }
+                status.text = "Tap a video to start it."
+                for (c in list) {
+                    val card = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(16), dp(14), dp(16), dp(14))
+                        background = rounded(CARD)
+                    }
+                    card.addView(label(c.title.ifEmpty { "Video from your list" }, 16f, Color.WHITE, bold = true).apply { maxLines = 3 })
+                    val meta = label(listOf(c.author, if (c.lengthSec > 0) YouTube.clock(c.lengthSec) else "").filter { it.isNotEmpty() }.joinToString(" · "), 13f, MUTED)
+                    card.addView(meta, lp(top = 4))
+                    card.setOnClickListener {
+                        if (picking) return@setOnClickListener
+                        picking = true
+                        meta.text = "Checking it can play here…"
+                        io.execute {
+                            val res = try { Result.success(YouTube.verify(c, minS, maxS)) } catch (e: Exception) { Result.failure(e) }
+                            ui.post {
+                                picking = false
+                                if (isFinishing || screen != Session.PICKING) return@post
+                                res.onSuccess { v ->
+                                    p.pickChosen = true
+                                    Session.applyPick(this, v)
+                                    render()
+                                }.onFailure { e ->
+                                    meta.text = "Can't use this one (${e.message}). Pick another."
+                                    card.alpha = 0.4f
+                                    card.setOnClickListener(null)
+                                    Session.markWatched(p, c.id)
+                                }
+                            }
+                        }
+                    }
+                    listBox.addView(card, lp(top = 10))
+                }
+            }
+        }
+    }
+
     private fun showPicking() {
+        if (!p.pickChosen) { showChooser(); return }
         clear(Session.PICKING)
         val col = column()
         col.addView(label("Good morning.", 30f, Color.WHITE, bold = true))
-        col.addView(label("Finding today's video from ${p.channels}…", 16f, MUTED))
+        col.addView(label("Finding today's video from ${chosenChannels().joinToString()}…", 16f, MUTED))
         col.addView(ProgressBar(this).apply { isIndeterminate = true }, lp(top = 24))
         val status = label(if (p.pickError.isNotEmpty()) "Last try: ${p.pickError}" else "", 14f, MUTED)
         col.addView(status, lp(top = 16))
@@ -219,7 +357,9 @@ class LockActivity : Activity() {
         io.execute {
             var err: String? = null
             try {
-                val v = YouTube.pick(this, p)
+                val v = YouTube.pick(this, p, chosenChannels(),
+                    if (p.pickMinSec > 0) p.pickMinSec else p.minMinutes * 60,
+                    if (p.pickMaxSec > 0) p.pickMaxSec else p.maxMinutes * 60)
                 Session.applyPick(this, v)
             } catch (e: Exception) {
                 err = e.message ?: e.javaClass.simpleName

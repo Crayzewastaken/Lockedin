@@ -48,19 +48,20 @@ object Stats {
     }
 
     /** Which bucket a channel name goes in. */
-    fun bucket(author: String): String {
+    /** Groups a video's channel name under the YouTuber you added in settings (or its own name). */
+    fun bucket(ctx: Context, author: String): String {
+        if (author.isBlank()) return "Other"
         val a = author.lowercase()
-        return when {
-            a.contains("hormozi") -> "Alex Hormozi"
-            a.contains("miner") -> "Jeremy Miner"
-            else -> "Other"
-        }
+        if (a.contains("hormozi")) return "Alex Hormozi"
+        if (a.contains("jeremy miner") || a.contains("7th level")) return "Jeremy Miner"
+        for (name in YouTube.channelList(Prefs(ctx))) if (YouTube.matches(author, name)) return name
+        return author.trim()
     }
 
     @Synchronized
     fun addWatch(ctx: Context, author: String, seconds: Double) {
         if (seconds <= 0) return
-        val b = bucket(author)
+        val b = bucket(ctx, author)
         pendingWatch[b] = (pendingWatch[b] ?: 0.0) + seconds
         val now = System.currentTimeMillis()
         if (now - lastFlush > 15_000) flush(ctx)
@@ -83,7 +84,7 @@ object Stats {
         val j = load(ctx)
         j.put(VIDEOS_DONE, j.optInt(VIDEOS_DONE) + 1)
         val v = j.optJSONObject("videosBy") ?: JSONObject()
-        val b = bucket(author)
+        val b = bucket(ctx, author)
         v.put(b, v.optInt(b) + 1)
         j.put("videosBy", v)
         save(ctx, j)

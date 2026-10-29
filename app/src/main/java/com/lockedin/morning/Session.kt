@@ -86,6 +86,7 @@ object Session {
         p.sessionStartedAt = System.currentTimeMillis()
         p.phase = PICKING
         p.pickError = ""
+        p.pickChosen = false
         p.playerErrors = 0
         p.videoId = ""
         p.videoTitle = ""

@@ -75,7 +75,7 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(32), dp(20), dp(40))
         }
         col.addView(label("Locked In", 30f, Color.WHITE, true))
-        col.addView(label("Your first unlock each morning opens a 30+ minute Hormozi or Jeremy Miner video, then a quiz. Your phone is locked until you pass.", 15f, MUTED), lp(6))
+        col.addView(label("Your first unlock each morning: pick a 30+ minute video from your YouTubers, watch it, then a quiz. Your phone is locked until you pass.", 15f, MUTED), lp(6))
 
         dashBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(section("Dashboard"))
@@ -126,7 +126,7 @@ class MainActivity : Activity() {
         providerBox(col, "Built-in fill-in-the-blank (no AI, no key)", p.useBuiltIn) { p.useBuiltIn = it }
 
         col.addView(section("Videos & schedule"))
-        textField(col, "Channels (comma separated)", p.channels) { p.channels = it }
+        channelEditor(col)
         textField(col, "YouTube Data API key (optional, makes video finding more reliable)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
         textField(col, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
         intField(col, "Shortest video (minutes)", p.minMinutes) { p.minMinutes = it.coerceAtLeast(1) }
@@ -217,15 +217,22 @@ class MainActivity : Activity() {
         val big = card()
         big.addView(label("Total watched", 13f, MUTED))
         big.addView(label(Stats.hours(total), 34f, Color.WHITE, true))
-        val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (who in listOf("Alex Hormozi", "Jeremy Miner")) {
-            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            c.addView(label(who, 13f, MUTED))
-            c.addView(label(Stats.hours(watch[who] ?: 0.0), 22f, ORANGE, true))
-            c.addView(label("${vids?.optInt(who) ?: 0} videos finished", 12f, MUTED))
-            split.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // One tile per YouTuber: the ones you follow, plus anyone else you've watched. Two per row.
+        val names = (YouTube.channelList(p) + watch.keys.filter { it != "Other" && (watch[it] ?: 0.0) > 60 })
+            .distinct()
+            .sortedByDescending { watch[it] ?: 0.0 }
+        names.chunked(2).forEachIndexed { rowIdx, pair ->
+            val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (who in pair) {
+                val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                c.addView(label(who, 13f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                c.addView(label(Stats.hours(watch[who] ?: 0.0), 22f, ORANGE, true))
+                c.addView(label("${vids?.optInt(who) ?: 0} videos finished", 12f, MUTED))
+                split.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            if (pair.size == 1) split.addView(android.view.View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            big.addView(split, lp(if (rowIdx == 0) 10 else 12))
         }
-        big.addView(split, lp(10))
         if ((watch["Other"] ?: 0.0) > 60) big.addView(label("Other videos: ${Stats.hours(watch["Other"] ?: 0.0)}", 12f, MUTED), lp(6))
         dashBox.addView(big, lp(8))
 
@@ -465,6 +472,86 @@ class MainActivity : Activity() {
         }
         col.addView(et, lp(4))
         savers.add { save(et.text.toString()) }
+    }
+
+    private val SUGGESTED = listOf(
+        "Alex Hormozi", "Jeremy Miner", "Leila Hormozi", "Codie Sanchez", "The Diary Of A CEO",
+        "Ali Abdaal", "Iman Gadzhi", "Andrew Huberman", "Chris Williamson", "Grant Cardone",
+        "Russell Brunson", "Dan Martell", "Tony Robbins", "Simon Sinek", "My First Million",
+    )
+
+    /** Your YouTubers as removable chips, an "add" box, and one-tap suggestions. */
+    private fun channelEditor(col: LinearLayout) {
+        col.addView(label("YouTubers (tap ✕ to remove)", 13f, MUTED), lp(14))
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(box, lp(4))
+        val sugBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        fun setList(list: List<String>) {
+            p.channels = list.distinctBy { it.lowercase() }.joinToString(", ")
+            p.poolFetchedAt = 0L // rebuild the video list with the new channels
+        }
+        lateinit var redraw: () -> Unit
+        redraw = {
+            box.removeAllViews()
+            val list = YouTube.channelList(p)
+            for (name in list) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14), dp(10), dp(8), dp(10))
+                    background = rounded(CARD)
+                }
+                row.addView(label(name, 15f, Color.WHITE), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                val x = label("✕", 18f, MUTED).apply {
+                    setPadding(dp(12), dp(2), dp(8), dp(2))
+                    setOnClickListener {
+                        if (list.size <= 1) { toast("Keep at least one YouTuber"); return@setOnClickListener }
+                        setList(list - name); redraw()
+                    }
+                }
+                row.addView(x)
+                box.addView(row, lp(6))
+            }
+            sugBox.removeAllViews()
+            val sugg = SUGGESTED.filter { s -> list.none { it.equals(s, true) } }
+            if (sugg.isNotEmpty()) {
+                sugBox.addView(label("Suggestions (tap to add)", 12f, MUTED), lp(8))
+                sugg.chunked(2).forEach { pair ->
+                    val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                    for (sname in pair) {
+                        val chip = label("+ $sname", 13f, Color.WHITE).apply {
+                            setPadding(dp(12), dp(8), dp(12), dp(8))
+                            background = rounded(0xFF26262A.toInt())
+                            maxLines = 1
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                            setOnClickListener { setList(YouTube.channelList(p) + sname); redraw() }
+                        }
+                        r.addView(chip, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
+                    }
+                    if (pair.size == 1) r.addView(android.view.View(this), LinearLayout.LayoutParams(0, 1, 1f))
+                    sugBox.addView(r, lp(6))
+                }
+            }
+        }
+        val addRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val input = EditText(this).apply {
+            hint = "Add a YouTuber (channel name)"
+            setHintTextColor(MUTED)
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            background = rounded(CARD)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        addRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addRow.addView(button("Add", ORANGE) {
+            val v = input.text.toString().trim()
+            if (v.isNotEmpty()) { setList(YouTube.channelList(p) + v); input.setText(""); redraw() }
+        }, LinearLayout.LayoutParams(dp(80), dp(46)).apply { marginStart = dp(8) })
+        col.addView(addRow, lp(8))
+        col.addView(sugBox)
+        redraw()
     }
 
     /** A switch with a box under it that is only shown while the switch is on. */

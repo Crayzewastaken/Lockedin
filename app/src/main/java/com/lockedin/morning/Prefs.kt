@@ -95,6 +95,10 @@ class Prefs(ctx: Context) {
     var phase by str("")
     var sessionStartedAt by long(0L)
     var pickError by str("")
+    var pickChosen by bool(false)
+    var pickChannels by str("")
+    var pickMinSec by int(0)
+    var pickMaxSec by int(0)
     var playerErrors by int(0)
 
     var videoId by str("")
