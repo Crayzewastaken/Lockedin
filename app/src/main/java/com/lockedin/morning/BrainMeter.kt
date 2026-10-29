@@ -116,10 +116,11 @@ object BrainMeter {
         texts.addView(label(headline, 20f, color, true))
         texts.addView(label("$todayMin min scrolled today", 15f, Color.WHITE), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         // Honest projections from your own numbers.
-        val dailyAvgMin = weekSec / 60 / 7
+        val tracked = Scroll.daysTracked(ctx, 7)
+        val dailyAvgMin = weekSec / 60 / tracked
         val daysPerYear = dailyAvgMin * 365 / 60 / 24
         if (dailyAvgMin >= 1) texts.addView(label(
-            "At your 7-day pace (${dailyAvgMin.toInt()} min/day) that's ${"%.1f".format(daysPerYear)} full days a year.",
+            "At your ${if (tracked == 1) "current" else "$tracked-day"} pace (${dailyAvgMin.toInt()} min/day) that's ${"%.1f".format(daysPerYear)} full days a year.",
             13f, MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         if (todayMin >= 20) texts.addView(label(
             "Today's scrolling = ${todayMin / 40} morning video${if (todayMin / 40 == 1) "" else "s"} you could have watched.",

@@ -95,6 +95,20 @@ object Scroll {
         return out
     }
 
+    /** How many of the last [days] days have any tracked time (at least 1). */
+    @Synchronized
+    fun daysTracked(ctx: Context, days: Int): Int {
+        val j = try { JSONObject(sp(ctx).getString("time", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        val cal = java.util.Calendar.getInstance()
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        var n = 0
+        for (i in 0 until days) {
+            if (j.has(fmt.format(cal.time)) || i == 0) n++
+            cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+        }
+        return n.coerceAtLeast(1)
+    }
+
     @Synchronized
     fun logCheckIn(ctx: Context, pkg: String, minutes: Int, gain: String, note: String, decision: String) {
         val arr = try { JSONArray(sp(ctx).getString("log", "[]") ?: "[]") } catch (_: Exception) { JSONArray() }
