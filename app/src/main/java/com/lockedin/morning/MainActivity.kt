@@ -65,6 +65,17 @@ class MainActivity : Activity() {
             finish()
             return
         }
+        if (!p.sp.getBoolean("onboarded", false)) {
+            startActivity(Intent(this, SetupActivity::class.java))
+            return
+        }
+        if (p.sp.getBoolean("rebuildMain", false)) {
+            // Setup changed settings: rebuild so the settings screen shows the new values.
+            p.sp.edit().putBoolean("rebuildMain", false).apply()
+            savers.clear(); summaries.clear(); groupOpeners.clear()
+            inSettings = false
+            build()
+        }
         refreshPerms()
         refreshStatus()
         refreshSummary()
@@ -156,11 +167,10 @@ class MainActivity : Activity() {
 
         // 1. YouTubers & videos
         val yt = group(set, "📺  YouTubers & videos") {
-            "${YouTube.channelList(p).joinToString()} · ${p.minMinutes}+ min"
+            "${YouTube.channelList(p).joinToString()} · ${Lengths.current(p).label}"
         }
         channelEditor(yt)
-        intField(yt, "Shortest video (minutes)", p.minMinutes) { p.minMinutes = it.coerceAtLeast(1) }
-        intField(yt, "Longest video for \"Surprise me\" (minutes)", p.maxMinutes) { p.maxMinutes = it.coerceAtLeast(p.minMinutes) }
+        lengthPicker(yt)
         textField(yt, "Extra video links (optional, one per line)", p.extraVideoUrls, multi = true) { p.extraVideoUrls = it }
         textField(yt, "YouTube Data API key (optional)", p.youtubeKey, secret = true) { p.youtubeKey = it.trim() }
 
@@ -253,6 +263,10 @@ class MainActivity : Activity() {
         textField(msg, "Messaging apps (package names)", p.messagingApps) { p.messagingApps = it.replace("\n", ",") }
 
         set.addView(button("Save", ORANGE) { saveAll(); toast("Saved") }, lp(24))
+        set.addView(button("Run the setup guide again", CARD) {
+            saveAll()
+            startActivity(Intent(this, SetupActivity::class.java))
+        }, lp(10))
         set.addView(label("Breaks: 15 min a day in total, up to 3 breaks.", 13f, MUTED).apply { gravity = Gravity.CENTER }, lp(14))
         settingsView = scrollOf(set)
 
@@ -315,6 +329,31 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /** Video length: one tap to choose. Used every morning. */
+    private fun lengthPicker(col: LinearLayout) {
+        col.addView(label("Video length", 13f, MUTED), lp(16))
+        val chips = mutableListOf<TextView>()
+        val opts = Lengths.options(p)
+        fun paint() {
+            val cur = Lengths.current(p)
+            chips.forEachIndexed { i, v ->
+                val on = opts[i] == cur
+                v.background = rounded(if (on) 0xFF3A2A1C.toInt() else FIELD)
+                v.setTextColor(if (on) Color.WHITE else MUTED)
+                v.text = (if (on) "✓  " else "") + opts[i].label
+            }
+        }
+        for (o in opts) {
+            val c = label(o.label, 15f, Color.WHITE).apply {
+                setPadding(dp(14), dp(11), dp(14), dp(11))
+                setOnClickListener { Lengths.set(p, o); paint(); summaries.forEach { it() } }
+            }
+            chips.add(c)
+            col.addView(c, lp(6))
+        }
+        paint()
     }
 
     /** A collapsible settings section: title + one-line summary; tap to open. */

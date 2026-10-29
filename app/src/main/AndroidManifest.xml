@@ -33,6 +33,11 @@
             android:theme="@style/LockTheme" />
 
         <activity
+            android:name=".SetupActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+
+        <activity
             android:name=".CheckInActivity"
             android:excludeFromRecents="true"
             android:exported="false"

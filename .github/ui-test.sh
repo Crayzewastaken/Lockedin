@@ -120,12 +120,51 @@ tap_text "Show me videos" $OUT/ui-chooser2.xml
 sleep 25
 adb exec-out screencap -p > $OUT/15-video-list.png
 
+# ---- First-run setup guide
+setup_at() {
+  adb shell am force-stop $PKG
+  cat > lockedin4.xml <<XML
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="active" value="false" />
+    <boolean name="onboarded" value="false" />
+    <int name="setupStep" value="$1" />
+    <boolean name="workEnabled" value="true" />
+</map>
+XML
+  adb push lockedin4.xml /data/local/tmp/lockedin.xml
+  adb shell cp /data/local/tmp/lockedin.xml /data/data/$PKG/shared_prefs/lockedin.xml
+  adb shell chown -R $APPUID:$APPUID /data/data/$PKG/shared_prefs
+  adb shell am start -n $PKG/.MainActivity
+  sleep 4
+}
+setup_at 0
+adb exec-out screencap -p > $OUT/20-setup-welcome.png
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-setup.xml >/dev/null 2>&1
+tap_text "Get started" $OUT/ui-setup.xml
+sleep 1.5
+adb exec-out screencap -p > $OUT/21-setup-overlay.png
+setup_at 3
+adb exec-out screencap -p > $OUT/22-setup-accessibility.png
+setup_at 8
+adb exec-out screencap -p > $OUT/23-setup-youtubers.png
+setup_at 9
+adb exec-out screencap -p > $OUT/24-setup-length.png
+setup_at 10
+adb exec-out screencap -p > $OUT/25-setup-quiz.png
+setup_at 11
+adb exec-out screencap -p > $OUT/26-setup-work.png
+setup_at 13
+adb exec-out screencap -p > $OUT/27-setup-done.png
+
 # ---- Settings + dashboard (no session running; Gemini on, OpenRouter + Claude off; sample stats)
 adb shell am force-stop $PKG
 cat > lockedin2.xml <<XML
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
     <boolean name="active" value="false" />
+    <boolean name="onboarded" value="true" />
     <boolean name="useGemini" value="true" />
     <boolean name="useOpenRouter" value="false" />
     <boolean name="useClaude" value="false" />
