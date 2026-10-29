@@ -672,13 +672,10 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
         }
-        // Quiz makers switched on without a key.
-        if (p.useGemini && p.geminiKey.isBlank())
-            permRow("Add your Gemini key", "Free at aistudio.google.com/apikey, then paste it in Settings → Quiz.", false) { openSettings("quiz") }
-        if (p.useOpenRouter && p.openRouterKey.isBlank())
-            permRow("Add your OpenRouter key", "Free at openrouter.ai/keys, or switch OpenRouter off in Settings → Quiz.", false) { openSettings("quiz") }
-        if (p.useClaude && p.claudeKey.isBlank())
-            permRow("Add your Claude key", "Or switch Claude off in Settings → Quiz.", false) { openSettings("quiz") }
+        // No AI quiz key at all (Gemini or OpenRouter or Claude).
+        val anyKey = (p.useGemini && p.geminiKey.isNotBlank()) || (p.useOpenRouter && p.openRouterKey.isNotBlank()) || (p.useClaude && p.claudeKey.isNotBlank())
+        if (!anyKey && !p.sp.getBoolean("setupSkipKey", false))
+            permRow("Add a quiz key", "Free from Gemini or OpenRouter, so you get real quizzes. Settings → Quiz.", false) { openSettings("quiz") }
         // A newer build is out.
         val latest = Updater.latestKnown(this)
         if (latest > Updater.currentBuild(this))

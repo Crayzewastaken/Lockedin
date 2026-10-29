@@ -55,13 +55,17 @@ class SetupActivity : Activity() {
     private lateinit var steps: List<Step>
     private var visitedAppInfo = false
     private var geminiOk = false
+    private var openRouterOk = false
+    private var provider = "gemini"
     private var testing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         p = Prefs(this)
         visitedAppInfo = p.sp.getBoolean("setupVisitedAppInfo", false)
-        geminiOk = p.sp.getString("gemini_working_model", "").orEmpty().isNotEmpty()
+        geminiOk = p.sp.getString("gemini_working_model", "").orEmpty().isNotEmpty() && p.geminiKey.isNotBlank()
+        openRouterOk = p.sp.getBoolean("openRouterOk", false) && p.openRouterKey.isNotBlank()
+        provider = if (openRouterOk && !geminiOk) "openrouter" else "gemini"
         index = p.sp.getInt("setupStep", 0)
         steps = buildSteps()
         index = index.coerceIn(0, steps.lastIndex)
@@ -156,9 +160,9 @@ class SetupActivity : Activity() {
             extra = { lengths(it) })
 
         list += Step("🧠", "Set up the quiz",
-            "A free Gemini key lets the app write a real quiz about each video.\n\n1. Tap \"Get a free key\" and sign in with Google\n2. Tap \"Create API key\" and copy it\n3. Paste it below and tap Test",
-            "Get a free key", { open(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey"))) },
-            { geminiOk || (p.sp.getBoolean("setupSkipKey", false)) }, "Waiting for: a working key (tap Test)",
+            "A free AI key lets the app write a real quiz about each video. Pick one (or set up both, the second is a backup):",
+            done = { geminiOk || openRouterOk || p.sp.getBoolean("setupSkipKey", false) },
+            waitingHint = "Waiting for: a key that passes Test",
             extra = { quizKey(it) })
 
         list += Step("💼", "Work hours",
@@ -284,30 +288,60 @@ class SetupActivity : Activity() {
     }
 
     private fun quizKey(col: LinearLayout) {
-        val key = field("Paste your Gemini key here").apply {
-            setText(p.geminiKey)
+        // Which service: two tabs.
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((id, name) in listOf("gemini" to "Gemini", "openrouter" to "OpenRouter")) {
+            val ok = if (id == "gemini") geminiOk else openRouterOk
+            val t = chip((if (ok) "✓ " else "") + name, provider == id) { provider = id; render() }
+            t.gravity = Gravity.CENTER
+            tabs.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (id == "gemini") marginEnd = dp(8) })
+        }
+        col.addView(tabs, lp(16))
+
+        val isGemini = provider == "gemini"
+        val steps = if (isGemini)
+            "1. Tap \"Get a free key\" and sign in with Google\n2. Tap \"Create API key\" and copy it\n3. Paste it below and tap Test"
+        else
+            "1. Tap \"Get a free key\" and sign up (no card needed)\n2. Tap \"Create Key\", give it any name, and copy it\n3. Paste it below and tap Test (free models can take up to a minute)"
+        col.addView(label(steps, 15f, 0xFFCFCFD4.toInt()), lp(14))
+        col.addView(button("Get a free ${if (isGemini) "Gemini" else "OpenRouter"} key", ORANGE) {
+            open(Intent(Intent.ACTION_VIEW, Uri.parse(if (isGemini) "https://aistudio.google.com/apikey" else "https://openrouter.ai/keys")))
+        }, lp(14))
+
+        val key = field("Paste your ${if (isGemini) "Gemini" else "OpenRouter"} key here").apply {
+            setText(if (isGemini) p.geminiKey else p.openRouterKey)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         }
-        col.addView(key, lp(16))
-        val result = label(if (geminiOk) "✅ Key works" else "", 14f, GREEN)
-        col.addView(button(if (testing) "Testing…" else "Test", if (geminiOk) FIELD else ORANGE) {
+        col.addView(key, lp(12))
+        val ok = if (isGemini) geminiOk else openRouterOk
+        val result = label(if (ok) "✅ Key works" else "", 14f, GREEN)
+        col.addView(button(if (testing) "Testing…" else "Test", if (ok) FIELD else ORANGE) {
             if (testing) return@button
-            p.geminiKey = key.text.toString().trim()
-            p.useGemini = true
-            if (p.geminiKey.isEmpty()) { result.setTextColor(0xFFD64545.toInt()); result.text = "Paste a key first"; return@button }
+            val k = key.text.toString().trim()
+            if (k.isEmpty()) { result.setTextColor(0xFFD64545.toInt()); result.text = "Paste a key first"; return@button }
+            if (isGemini) { p.geminiKey = k; p.useGemini = true } else { p.openRouterKey = k; p.useOpenRouter = true }
             testing = true
             result.setTextColor(MUTED); result.text = "Testing… (up to a minute)"
             Thread {
-                val msg = try { "✅ Key works (${Quiz.testGemini(p)})" } catch (e: Exception) { "❌ ${e.message}" }
+                val msg = try {
+                    if (isGemini) "✅ Key works (${Quiz.testGemini(p)})" else { Quiz.testOpenRouter(p); "✅ Key works" }
+                } catch (e: Exception) { "❌ ${e.message}" }
                 runOnUiThread {
                     testing = false
-                    geminiOk = msg.startsWith("✅")
+                    val good = msg.startsWith("✅")
+                    if (isGemini) geminiOk = good else {
+                        openRouterOk = good
+                        p.sp.edit().putBoolean("openRouterOk", good).apply()
+                    }
                     render()
-                    if (!geminiOk) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    if (!good) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 }
             }.start()
         }, lp(8))
         col.addView(result, lp(8))
+        // If only OpenRouter works, don't keep trying an empty Gemini first.
+        if (openRouterOk && p.geminiKey.isBlank()) p.useGemini = false
+
         col.addView(label("Skip and use the basic built-in quiz instead", 14f, MUTED).apply {
             setPadding(0, dp(18), 0, 0)
             paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
