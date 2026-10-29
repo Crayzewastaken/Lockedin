@@ -828,6 +828,7 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         if (p.sp.getString("statsQuizKey", "") != attemptKey) {
             p.sp.edit().putString("statsQuizKey", attemptKey).apply()
             Stats.quiz(this, score, n, score >= needed)
+            Bank.addFromMorning(this, qs, answers, p.videoTitle, p.videoAuthor, p.sessionDay.ifEmpty { Session.today() })
         }
 
         if (score >= needed) {

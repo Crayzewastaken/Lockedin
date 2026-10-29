@@ -143,7 +143,10 @@ class MainActivity : Activity() {
         toggle(workBox, "Weekdays only (Mon–Fri)", p.workWeekdaysOnly) { p.workWeekdaysOnly = it }
         col.addView(section("Scroll check-ins"))
         val scrollBox = providerBox(col, "Check in while I scroll (Instagram, TikTok)", p.scrollEnabled) { p.scrollEnabled = it }
-        scrollBox.addView(label("Every 15–20 min of scrolling, a full-screen card asks what you got out of it. Then you choose: keep going, or close the app.", 13f, MUTED), lp(6))
+        scrollBox.addView(label("Every 15–20 min of scrolling, you're forced into a short quiz on your previous days' videos. You can't leave until it's done. Then you choose: keep going, or close the app.", 13f, MUTED), lp(6))
+        intField(scrollBox, "Recall quiz questions", p.recallQuestions) { p.recallQuestions = it.coerceIn(1, 20) }
+        intField(scrollBox, "Recall quiz time limit (minutes)", p.recallSeconds / 60) { p.recallSeconds = it.coerceIn(1, 30) * 60 }
+        scrollBox.addView(label("Questions saved so far: ${Bank.size(this)} (every morning quiz adds more)", 12f, MUTED), lp(4))
         intField(scrollBox, "Check in after at least (minutes)", p.scrollMinMin) { p.scrollMinMin = it.coerceIn(1, 120) }
         intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
         textField(scrollBox, "Apps to watch (package names, comma separated)", p.scrollApps, multi = true) { p.scrollApps = it.replace("\n", ",") }
@@ -303,7 +306,8 @@ class MainActivity : Activity() {
             val r2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             stat(r2, "$ci", "check-ins")
             stat(r2, "${st.optInt("checkInsClosed")}", "times you closed it")
-            stat(r2, if (ci > 0) "${st.optInt("checkInsNothing") * 100 / ci}%" else "–", "\"nothing gained\"")
+            val rq = st.optInt("recallQuestions")
+            stat(r2, if (rq > 0) "${st.optInt("recallCorrect") * 100 / rq}%" else "–", "recall score")
             sc.addView(r2, lp(10))
             val recent = Scroll.log(this).takeLast(3).reversed()
             if (recent.isNotEmpty()) {

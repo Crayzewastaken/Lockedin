@@ -96,6 +96,7 @@ class EnforcerService : AccessibilityService() {
         if (isIgnorable(pkg)) return
         currentPkg = pkg
         try {
+            if (enforceRecall(Prefs(this))) return
             enforce()
         } catch (_: Exception) {
         }
@@ -134,6 +135,32 @@ class EnforcerService : AccessibilityService() {
     }
 
     private var lastScrollTick = 0L
+    private var lastRecallBounce = 0L
+
+    /** While a scroll recall quiz is running you can't leave it. Returns true if it's running. */
+    private fun enforceRecall(p: Prefs): Boolean {
+        if (!p.recallActive) return false
+        if (System.currentTimeMillis() > p.recallUntil + 120_000L) { // safety: never stuck
+            p.recallActive = false
+            Scroll.promptShowing = false
+            return false
+        }
+        if (locked()) return true
+        val pkg = currentPkg
+        if (pkg.isEmpty() || pkg == packageName || isAlwaysAllowed(pkg)) return true
+        val t = SystemClock.elapsedRealtime()
+        if (t - lastRecallBounce < 800) return true
+        lastRecallBounce = t
+        try {
+            startActivity(
+                Intent(this, CheckInActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(CheckInActivity.EXTRA_APP, p.recallApp)
+            )
+        } catch (_: Exception) {
+        }
+        return true
+    }
 
     /** Counts time in Instagram/TikTok and triggers the check-in every 15–20 minutes. */
     private fun scrollTick(p: Prefs, pkg: String?) {
@@ -173,6 +200,7 @@ class EnforcerService : AccessibilityService() {
                 val root = try { rootInActiveWindow } catch (_: Exception) { null }
                 val pkg = root?.packageName?.toString()
                 if (pkg != null && !isIgnorable(pkg)) currentPkg = pkg
+                if (enforceRecall(p)) return
                 scrollTick(p, if (currentPkg.isEmpty()) null else currentPkg)
             } else {
                 lastScrollTick = 0L

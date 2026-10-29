@@ -17,7 +17,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Full-screen "what did you gain?" check-in shown every 15–20 min of Instagram/TikTok. */
+/**
+ * Shown every 15–20 min of Instagram/TikTok: a forced 5-minute quiz on previous days' videos.
+ * While it's up you can't leave it (calls and alarms still work). If there are no saved
+ * questions yet, it falls back to a "what did you gain?" card.
+ */
 class CheckInActivity : Activity() {
 
     companion object {
@@ -47,24 +51,55 @@ class CheckInActivity : Activity() {
     private lateinit var note: EditText
     private val chipViews = mutableListOf<TextView>()
 
+    // ---- recall quiz state
+    private var recall: List<Bank.Item> = emptyList()
+    private val recallAnswers = mutableListOf<Int>()
+    private var recallDone = false
+    private var tapping = false
+    private lateinit var p: Prefs
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        app = intent.getStringExtra(EXTRA_APP) ?: ""
+        p = Prefs(this)
+        app = intent.getStringExtra(EXTRA_APP) ?: p.recallApp
         minutes = intent.getIntExtra(EXTRA_MIN, 15)
         Scroll.promptShowing = true
-        build()
+        start()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Bounced back here while a quiz is running: just carry on with it.
+        if (recall.isNotEmpty() && !recallDone) return
         setIntent(intent)
         app = intent.getStringExtra(EXTRA_APP) ?: app
         minutes = intent.getIntExtra(EXTRA_MIN, minutes)
-        build()
+        if (!answered && recall.isEmpty()) return
+        answered = false
+        start()
+    }
+
+    private fun start() {
+        recall = Bank.pick(this, p.recallQuestions.coerceIn(1, 20))
+        recallAnswers.clear()
+        recallDone = false
+        if (recall.isEmpty()) {
+            build() // nothing saved yet: "what did you gain?" card
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!p.recallActive || p.recallUntil < now) p.recallUntil = now + p.recallSeconds.coerceIn(60, 1800) * 1000L
+        p.recallApp = app
+        p.recallActive = true
+        showQuestion()
+    }
+
+    private fun endRecall() {
+        p.recallActive = false
     }
 
     override fun onDestroy() {
-        Scroll.promptShowing = false
+        if (recall.isEmpty() || recallDone || answered) Scroll.promptShowing = false
         ui.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
@@ -72,8 +107,144 @@ class CheckInActivity : Activity() {
     @Deprecated("Must answer the check-in")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        if (recall.isNotEmpty() && !recallDone) {
+            android.widget.Toast.makeText(this, "Finish the quiz first", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (recall.isNotEmpty()) { finishRecall("closed"); return }
         // Back = "I'm done", the honest way out.
         decide("closed")
+    }
+
+    // ------------------------------------------------------------------ recall quiz
+
+    private fun showQuestion() {
+        ui.removeCallbacksAndMessages(null)
+        val i = recallAnswers.size
+        if (i >= recall.size || System.currentTimeMillis() >= p.recallUntil) {
+            showRecallResult()
+            return
+        }
+        val item = recall[i]
+        val q = item.q
+        val name = Scroll.appName(this, app)
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(48), dp(24), dp(32))
+        }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        top.addView(label("$minutes min on $name · Quick recall", 14f, ORANGE, true),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val timer = label("", 16f, ORANGE, true)
+        top.addView(timer)
+        col.addView(top)
+        col.addView(label("Question ${i + 1} of ${recall.size} · from ${dayLabel(item.day)}: ${item.title}", 13f, MUTED).apply {
+            maxLines = 2
+        }, lp(8))
+        col.addView(label(q.q, 21f, Color.WHITE, true), lp(14))
+        val btns = mutableListOf<TextView>()
+        q.options.forEachIndexed { k, opt ->
+            val b = label(opt, 16f, Color.WHITE).apply {
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = rounded(CARD)
+                setOnClickListener { answer(k, btns) }
+            }
+            btns.add(b)
+            col.addView(b, lp(10))
+        }
+        col.addView(label("You can't leave until this is done (calls still work).", 12f, MUTED).apply {
+            gravity = Gravity.CENTER
+        }, lp(20))
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isFillViewport = true
+            addView(col)
+        })
+        val tick = object : Runnable {
+            override fun run() {
+                val ms = p.recallUntil - System.currentTimeMillis()
+                if (ms <= 0) { showRecallResult(); return }
+                val sec = (ms / 1000).toInt() + 1
+                timer.text = String.format("%d:%02d", sec / 60, sec % 60)
+                ui.postDelayed(this, 500)
+            }
+        }
+        ui.post(tick)
+    }
+
+    private fun answer(k: Int, btns: List<TextView>) {
+        if (tapping) return
+        tapping = true
+        val q = recall[recallAnswers.size].q
+        recallAnswers.add(k)
+        btns.getOrNull(q.answer)?.background = rounded(GREEN)
+        if (k != q.answer) btns.getOrNull(k)?.background = rounded(0xFFD64545.toInt())
+        ui.postDelayed({ tapping = false; showQuestion() }, 700)
+    }
+
+    private fun showRecallResult() {
+        if (recallDone) return
+        recallDone = true
+        ui.removeCallbacksAndMessages(null)
+        endRecall()
+        val n = recall.size
+        val right = recall.indices.count { recallAnswers.getOrNull(it) == recall[it].q.answer }
+        Bank.record(this, recall.indices.associate { recall[it].id to (recallAnswers.getOrNull(it) == recall[it].q.answer) })
+        Stats.inc(this, "recallQuizzes")
+        Stats.inc(this, "recallCorrect", right)
+        Stats.inc(this, "recallQuestions", n)
+
+        val name = Scroll.appName(this, app)
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(48), dp(24), dp(32))
+        }
+        col.addView(label(if (right == n) "Sharp. $right/$n ✅" else "$right/$n", 30f, Color.WHITE, true))
+        col.addView(label(if (right == n) "You remembered it all." else "Here's what slipped:", 15f, MUTED), lp(6))
+        for (i in recall.indices) {
+            val it = recall[i]
+            if (recallAnswers.getOrNull(i) == it.q.answer) continue
+            col.addView(label(it.q.q, 15f, Color.WHITE, true), lp(14))
+            col.addView(label("Answer: ${it.q.options[it.q.answer]}", 14f, GREEN), lp(4))
+            if (it.q.explain.isNotBlank()) col.addView(label(it.q.explain, 13f, MUTED), lp(2))
+        }
+        col.addView(button("I'm done, close $name", GREEN) { finishRecall("closed") }, lp(24))
+        col.addView(button("Back to $name", CARD) { finishRecall("continued") }, lp(10))
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isFillViewport = true
+            addView(col)
+        })
+    }
+
+    private fun finishRecall(decision: String) {
+        if (answered) return
+        answered = true
+        val n = recall.size
+        val right = recall.indices.count { recallAnswers.getOrNull(it) == recall[it].q.answer }
+        Scroll.logCheckIn(this, app, minutes, "Recall quiz $right/$n", "", decision)
+        Stats.inc(this, "checkIns")
+        if (decision == "closed") Stats.inc(this, "checkInsClosed")
+        Scroll.sinceCheckInSec = 0.0
+        Scroll.nextPromptSec = Scroll.newInterval(p)
+        Scroll.promptShowing = false
+        if (decision == "closed") {
+            Scroll.currentApp = ""
+            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        finish()
+    }
+
+    private fun dayLabel(day: String): String {
+        if (day == Session.today()) return "today"
+        val cal = java.util.Calendar.getInstance()
+        cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+        val y = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(cal.time)
+        if (day == y) return "yesterday"
+        return try {
+            val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(day)
+            java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.getDefault()).format(d!!)
+        } catch (_: Exception) { day }
     }
 
     private fun build() {
@@ -115,7 +286,7 @@ class CheckInActivity : Activity() {
         keepBtn.isEnabled = false
         keepBtn.alpha = 0.4f
         col.addView(keepBtn, lp(10))
-        col.addView(label("Pick an answer first. Next check-in in about ${(Prefs(this).scrollMinMin)} min.", 12f, MUTED).apply {
+        col.addView(label("Pick an answer first. Once you've done a morning quiz, this becomes a quick quiz on past videos.", 12f, MUTED).apply {
             gravity = Gravity.CENTER
         }, lp(8))
 
@@ -165,7 +336,6 @@ class CheckInActivity : Activity() {
         Stats.inc(this, "checkIns")
         if (decision == "closed") Stats.inc(this, "checkInsClosed")
         if (chosen == GAINS.lastIndex) Stats.inc(this, "checkInsNothing")
-        val p = Prefs(this)
         Scroll.sinceCheckInSec = 0.0
         Scroll.nextPromptSec = Scroll.newInterval(p)
         if (decision == "closed") {

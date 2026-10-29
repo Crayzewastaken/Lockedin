@@ -129,6 +129,45 @@ if [ -n "$B" ]; then
 fi
 adb shell input keyevent KEYCODE_BACK
 sleep 2
+# ---- Recall quiz (seed 3 questions "from yesterday")
+YDAY=$(date -d yesterday +%F)
+cat > bank.xml <<XML
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="items">[{&quot;id&quot;:&quot;a1&quot;,&quot;q&quot;:&quot;According to Hormozi, what should you do before raising your prices?&quot;,&quot;options&quot;:[&quot;Increase the value of the offer&quot;,&quot;Run more ads&quot;,&quot;Lower your costs&quot;,&quot;Hire a sales team&quot;],&quot;answer&quot;:&quot;Increase the value of the offer&quot;,&quot;explain&quot;:&quot;Make the offer so good people feel stupid saying no.&quot;,&quot;at&quot;:&quot;12:30&quot;,&quot;title&quot;:&quot;\$100M Offers in 45 minutes&quot;,&quot;author&quot;:&quot;Alex Hormozi&quot;,&quot;day&quot;:&quot;$YDAY&quot;,&quot;wrong&quot;:1,&quot;seen&quot;:0,&quot;lastSeen&quot;:0},{&quot;id&quot;:&quot;a2&quot;,&quot;q&quot;:&quot;What does Jeremy Miner say to ask instead of pitching early?&quot;,&quot;options&quot;:[&quot;Problem-awareness questions&quot;,&quot;Closing questions&quot;,&quot;Price questions&quot;,&quot;Yes/no questions&quot;],&quot;answer&quot;:&quot;Problem-awareness questions&quot;,&quot;explain&quot;:&quot;Let the prospect discover the problem themselves.&quot;,&quot;at&quot;:&quot;08:10&quot;,&quot;title&quot;:&quot;NEPQ sales training&quot;,&quot;author&quot;:&quot;Jeremy Miner&quot;,&quot;day&quot;:&quot;$YDAY&quot;,&quot;wrong&quot;:0,&quot;seen&quot;:0,&quot;lastSeen&quot;:0},{&quot;id&quot;:&quot;a3&quot;,&quot;q&quot;:&quot;How many leads did Hormozi say to contact per day when starting out?&quot;,&quot;options&quot;:[&quot;100&quot;,&quot;10&quot;,&quot;1,000&quot;,&quot;25&quot;],&quot;answer&quot;:&quot;100&quot;,&quot;explain&quot;:&quot;Volume beats talent early on.&quot;,&quot;at&quot;:&quot;31:05&quot;,&quot;title&quot;:&quot;\$100M Leads&quot;,&quot;author&quot;:&quot;Alex Hormozi&quot;,&quot;day&quot;:&quot;$YDAY&quot;,&quot;wrong&quot;:0,&quot;seen&quot;:0,&quot;lastSeen&quot;:0}]</string>
+</map>
+XML
+adb shell am force-stop $PKG
+adb push bank.xml /data/local/tmp/bank.xml
+adb shell cp /data/local/tmp/bank.xml /data/data/$PKG/shared_prefs/bank.xml
+adb shell chown -R $APPUID:$APPUID /data/data/$PKG/shared_prefs
+adb shell chmod 660 /data/data/$PKG/shared_prefs/bank.xml
+adb shell restorecon -R /data/data/$PKG/shared_prefs || true
+adb shell am start -n $PKG/.CheckInActivity --es app com.instagram.android --ei min 18
+sleep 3
+adb exec-out screencap -p > $OUT/12-recall-q1.png
+
+tap_first_option() {
+  adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+  adb pull /data/local/tmp/ui.xml $OUT/ui-recall.xml >/dev/null 2>&1
+  # the 4 options are the clickable TextViews; tap the first one
+  B=$(grep -oE 'clickable="true"[^>]*bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' $OUT/ui-recall.xml | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -1)
+  if [ -n "$B" ]; then
+    X1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\1/'); Y1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\2/')
+    X2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\3/'); Y2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\4/')
+    adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
+  fi
+}
+tap_first_option; sleep 0.3
+adb exec-out screencap -p > $OUT/12b-recall-answered.png
+sleep 1.5
+tap_first_option; sleep 1.5
+tap_first_option; sleep 2
+adb exec-out screencap -p > $OUT/13-recall-result.png
+# back button should NOT work mid-quiz, but works on the result screen
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+
 # dashboard again, now with a logged check-in
 adb shell am force-stop $PKG
 adb shell am start -n $PKG/.MainActivity
