@@ -141,6 +141,15 @@ class MainActivity : Activity() {
             Session.parseHhmm(v)?.let { p.workEndMin = it } ?: toast("Couldn't read work end time \"$v\"")
         }
         toggle(workBox, "Weekdays only (Mon–Fri)", p.workWeekdaysOnly) { p.workWeekdaysOnly = it }
+        col.addView(section("Scroll check-ins"))
+        val scrollBox = providerBox(col, "Check in while I scroll (Instagram, TikTok)", p.scrollEnabled) { p.scrollEnabled = it }
+        scrollBox.addView(label("Every 15–20 min of scrolling, a full-screen card asks what you got out of it. Then you choose: keep going, or close the app.", 13f, MUTED), lp(6))
+        intField(scrollBox, "Check in after at least (minutes)", p.scrollMinMin) { p.scrollMinMin = it.coerceIn(1, 120) }
+        intField(scrollBox, "…and at most (minutes)", p.scrollMaxMin) { p.scrollMaxMin = it.coerceIn(p.scrollMinMin, 180) }
+        textField(scrollBox, "Apps to watch (package names, comma separated)", p.scrollApps, multi = true) { p.scrollApps = it.replace("\n", ",") }
+        scrollBox.addView(label("Instagram = com.instagram.android · TikTok = com.zhiliaoapp.musically · YouTube = com.google.android.youtube · Facebook = com.facebook.katana", 12f, MUTED), lp(4))
+
+        col.addView(section("Quiz & messages"))
         intField(col, "Wait if an alarm is due within (minutes)", p.alarmBufferMin) { p.alarmBufferMin = it.coerceAtLeast(0) }
         intField(col, "Quiz questions", p.quizQuestions) { p.quizQuestions = it.coerceIn(3, 20) }
         intField(col, "Quiz time limit (seconds)", p.quizSeconds) { p.quizSeconds = it.coerceIn(60, 1800) }
@@ -271,6 +280,43 @@ class MainActivity : Activity() {
         hab.addView(r2, lp(10))
         if (st.optInt(Stats.SKIPPED_DAYS) > 0) hab.addView(label("Days skipped (video wouldn't load): ${st.optInt(Stats.SKIPPED_DAYS)}", 12f, MUTED), lp(8))
         dashBox.addView(hab, lp(8))
+
+        // Scrolling
+        if (p.scrollEnabled || st.optInt("checkIns") > 0) {
+            val sc = card()
+            sc.addView(label("Scrolling", 13f, MUTED))
+            val today = Scroll.timeByApp(this, 1)
+            val week = Scroll.timeByApp(this, 7)
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            stat(r, Stats.hours(today.values.sum()), "today")
+            stat(r, Stats.hours(week.values.sum()), "last 7 days")
+            stat(r, Stats.hours(week.values.sum() / 7), "daily average")
+            sc.addView(r, lp(6))
+            // per app this week
+            val byName = HashMap<String, Double>()
+            for ((k, v) in week) { val n = Scroll.appName(this, k); byName[n] = (byName[n] ?: 0.0) + v }
+            if (byName.isNotEmpty()) {
+                sc.addView(label(byName.entries.sortedByDescending { it.value }
+                    .joinToString("  ·  ") { "${it.key} ${Stats.hours(it.value)}" } + "  (7 days)", 12f, MUTED), lp(6))
+            }
+            val ci = st.optInt("checkIns")
+            val r2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            stat(r2, "$ci", "check-ins")
+            stat(r2, "${st.optInt("checkInsClosed")}", "times you closed it")
+            stat(r2, if (ci > 0) "${st.optInt("checkInsNothing") * 100 / ci}%" else "–", "\"nothing gained\"")
+            sc.addView(r2, lp(10))
+            val recent = Scroll.log(this).takeLast(3).reversed()
+            if (recent.isNotEmpty()) {
+                sc.addView(label("Recent answers", 12f, MUTED), lp(10))
+                val tf = SimpleDateFormat("EEE h:mma", Locale.getDefault())
+                for (e in recent) {
+                    val noteTxt = e.optString("note").let { if (it.isNotBlank()) " — \"$it\"" else "" }
+                    val dec = if (e.optString("decision") == "closed") "closed it" else "kept going"
+                    sc.addView(label("${tf.format(Date(e.optLong("t")))} · ${Scroll.appName(this, e.optString("app"))} ${e.optInt("min")}m\n${e.optString("gain")}$noteTxt · $dec", 13f, Color.WHITE), lp(6))
+                }
+            }
+            dashBox.addView(sc, lp(8))
+        }
     }
 
     /** Consecutive days (up to today/yesterday) that ended with a passed quiz or written summary. */

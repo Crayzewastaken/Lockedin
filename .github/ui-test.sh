@@ -112,6 +112,32 @@ for i in 1 2 3 4 5; do
   adb exec-out screencap -p > $OUT/6-main-scroll-$i.png
 done
 
+# ---- Scroll check-in screen
+adb shell am start -n $PKG/.CheckInActivity --es app com.instagram.android --ei min 17
+sleep 3
+adb exec-out screencap -p > $OUT/8-checkin.png
+# pick "Nothing really" (last option) to show the 10-second wait
+adb shell uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1
+adb pull /data/local/tmp/ui.xml $OUT/ui-checkin.xml >/dev/null 2>&1
+B=$(grep -oE 'text="[^"]*Nothing really[^"]*"[^>]*bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' $OUT/ui-checkin.xml | grep -oE '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -1)
+if [ -n "$B" ]; then
+  X1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\1/'); Y1=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\2/')
+  X2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\3/'); Y2=$(echo $B | sed -E 's/\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]/\4/')
+  adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
+  sleep 2
+  adb exec-out screencap -p > $OUT/9-checkin-nothing.png
+fi
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+# dashboard again, now with a logged check-in
+adb shell am start -n $PKG/.MainActivity
+sleep 3
+for i in 1 2; do
+  adb shell input swipe 540 1900 540 700 400
+  sleep 1
+done
+adb exec-out screencap -p > $OUT/10-dashboard-scrolling.png
+
 adb logcat -d > $OUT/logcat-full.txt
 grep -E "FATAL|AndroidRuntime|$PKG" $OUT/logcat-full.txt | head -200 > $OUT/logcat-app.txt
 adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" > $OUT/activity.txt

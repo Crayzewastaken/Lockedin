@@ -32,6 +32,14 @@
             android:taskAffinity="com.lockedin.morning.lock"
             android:theme="@style/LockTheme" />
 
+        <activity
+            android:name=".CheckInActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.lockedin.morning.checkin"
+            android:theme="@style/LockTheme" />
+
         <service
             android:name=".EnforcerService"
             android:exported="true"

@@ -133,8 +133,53 @@ class EnforcerService : AccessibilityService() {
         }
     }
 
+    private var lastScrollTick = 0L
+
+    /** Counts time in Instagram/TikTok and triggers the check-in every 15–20 minutes. */
+    private fun scrollTick(p: Prefs, pkg: String?) {
+        val now = SystemClock.elapsedRealtime()
+        val dt = if (lastScrollTick == 0L) 0.0 else ((now - lastScrollTick) / 1000.0).coerceAtMost(5.0)
+        lastScrollTick = now
+        if (!p.scrollEnabled || p.active || Scroll.promptShowing) return
+        if (pkg == null) return
+        val apps = Scroll.apps(p)
+        if (pkg in apps) {
+            // Back from a long gap (5+ min away): start a fresh count.
+            if (Scroll.awaySince != 0L && now - Scroll.awaySince > 5 * 60_000L) Scroll.sinceCheckInSec = 0.0
+            Scroll.awaySince = 0L
+            if (Scroll.nextPromptSec <= 0) Scroll.nextPromptSec = Scroll.newInterval(p)
+            Scroll.currentApp = pkg
+            Scroll.sinceCheckInSec += dt
+            Scroll.addTime(this, pkg, dt)
+            if (Scroll.sinceCheckInSec >= Scroll.nextPromptSec) {
+                Scroll.promptShowing = true
+                val i = Intent(this, CheckInActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(CheckInActivity.EXTRA_APP, pkg)
+                    .putExtra(CheckInActivity.EXTRA_MIN, (Scroll.sinceCheckInSec / 60).toInt())
+                try { startActivity(i) } catch (_: Exception) { Scroll.promptShowing = false }
+            }
+        } else if (pkg != packageName && Scroll.awaySince == 0L) {
+            Scroll.awaySince = now
+        }
+    }
+
     private fun periodic() {
         val p = Prefs(this)
+        run {
+            val pm = getSystemService(PowerManager::class.java)
+            val on = (pm == null || pm.isInteractive) && !locked()
+            if (on) {
+                val root = try { rootInActiveWindow } catch (_: Exception) { null }
+                val pkg = root?.packageName?.toString()
+                if (pkg != null && !isIgnorable(pkg)) currentPkg = pkg
+                scrollTick(p, if (currentPkg.isEmpty()) null else currentPkg)
+            } else {
+                lastScrollTick = 0L
+                if (Scroll.awaySince == 0L) Scroll.awaySince = SystemClock.elapsedRealtime()
+                Scroll.flush(this)
+            }
+        }
         if (!p.active) {
             if (extNotified != 0L) clearExtNotification()
             return
