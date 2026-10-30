@@ -109,10 +109,24 @@ object Quiz {
                 askGemini(p, lessonPrompt(transcript, title, author, n), if (hasT) null else "https://www.youtube.com/watch?v=$videoId")
             }?.let { return it }
         }
-        if (hasT && openRouter(p)) attempt("OpenRouter") { askOpenRouter(p, lessonPrompt(transcript, title, author, n)) }?.let { return it }
+        if (hasT && openRouter(p)) {
+            // Free models have smaller limits: send an even sample of the whole talk, smaller on retry.
+            for (size in listOf(45_000, 18_000)) {
+                attempt("OpenRouter") { askOpenRouter(p, lessonPrompt(fit(transcript, size), title, author, n)) }?.let { return it }
+            }
+        }
         if (hasT && claude(p)) attempt("Claude") { askClaude(p, lessonPrompt(transcript, title, author, n)) }?.let { return it }
         if (errors.isEmpty()) errors.add(if (hasT) "No AI quiz maker is switched on" else "No transcript and Gemini is off")
         throw Exception(errors.joinToString("\n"))
+    }
+
+    /** Shrink a transcript to about [max] chars by keeping evenly spaced chunks from start to end. */
+    fun fit(t: String, max: Int): String {
+        if (t.length <= max) return t
+        val chunks = 12
+        val each = max / chunks
+        val step = t.length / chunks
+        return (0 until chunks).joinToString("\n…\n") { i -> t.substring(i * step, minOf(t.length, i * step + each)) }
     }
 
     private fun lessonPrompt(transcript: String, title: String, author: String, n: Int): String = buildString {

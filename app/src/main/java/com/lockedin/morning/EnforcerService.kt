@@ -180,6 +180,7 @@ class EnforcerService : AccessibilityService() {
             Scroll.currentApp = pkg
             Scroll.sinceCheckInSec += dt
             Scroll.addTime(this, pkg, dt)
+            Lessons.topUp(this) // make sure the check-in quiz is ready before it fires
             if (Scroll.sinceCheckInSec >= Scroll.nextPromptSec) {
                 Scroll.promptShowing = true
                 val i = Intent(this, CheckInActivity::class.java)

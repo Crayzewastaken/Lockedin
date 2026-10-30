@@ -332,6 +332,7 @@ class LockActivity : Activity() {
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun showVideo() {
+        Lessons.ensureAsync(this)
         clear(Session.VIDEO)
         // Full screen; follows your phone's normal auto-rotate.
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -924,7 +925,6 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
             p.sp.edit().putString("statsQuizKey", attemptKey).apply()
             Stats.quiz(this, score, n, score >= needed)
             Bank.addFromMorning(this, qs, answers, p.videoTitle, p.videoAuthor, p.sessionDay.ifEmpty { Session.today() })
-            Lessons.ensureAsync(this)
         }
 
         if (score >= needed && p.catchUpTargetSec > 0 && Session.catchUpLeftSec(p) >= 60) {
