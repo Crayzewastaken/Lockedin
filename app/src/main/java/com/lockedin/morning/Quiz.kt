@@ -94,6 +94,49 @@ object Quiz {
         append("{\"questions\":[{\"q\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],\"answer\":0,\"explain\":\"...\",\"at\":\"12:34\"}]}")
     }
 
+    /**
+     * Questions about the TEACHINGS of a video (for the scroll check-in): principles, frameworks,
+     * and how to apply them to a situation. AI only: never fill-in-the-blank.
+     */
+    fun lessons(p: Prefs, transcript: String, videoId: String, title: String, author: String, n: Int = 12): List<Q> {
+        val errors = mutableListOf<String>()
+        fun attempt(name: String, call: () -> String): List<Q>? = try {
+            parseReply(call())
+        } catch (e: Exception) { errors.add("$name: ${e.message}"); null }
+        val hasT = transcript.isNotBlank()
+        if (gemini(p) && (hasT || videoId.isNotEmpty())) {
+            attempt("Gemini") {
+                askGemini(p, lessonPrompt(transcript, title, author, n), if (hasT) null else "https://www.youtube.com/watch?v=$videoId")
+            }?.let { return it }
+        }
+        if (hasT && openRouter(p)) attempt("OpenRouter") { askOpenRouter(p, lessonPrompt(transcript, title, author, n)) }?.let { return it }
+        if (hasT && claude(p)) attempt("Claude") { askClaude(p, lessonPrompt(transcript, title, author, n)) }?.let { return it }
+        if (errors.isEmpty()) errors.add(if (hasT) "No AI quiz maker is switched on" else "No transcript and Gemini is off")
+        throw Exception(errors.joinToString("\n"))
+    }
+
+    private fun lessonPrompt(transcript: String, title: String, author: String, n: Int): String = buildString {
+        if (transcript.isBlank()) {
+            append("Watch the attached YouTube video \"$title\" by $author.\n\n")
+        } else {
+            append("Below is the transcript of the YouTube video \"$title\" by $author.\n\n<transcript>\n")
+            append(transcript.take(180_000))
+            append("\n</transcript>\n\n")
+        }
+        append("Write $n multiple-choice questions that test whether someone LEARNED the teachings of this video ")
+        append("and can apply them, days later.\n")
+        append("Rules:\n")
+        append("- Test the core ideas: the principles, frameworks, mindsets, methods and the reasons behind them.\n")
+        append("- At least half should be short real-life scenarios, e.g. \"A prospect says it's too expensive. Based on this video, what's the best move?\"\n")
+        append("- Others ask why something works, what the speaker recommends instead of a common mistake, or which step comes first in their method.\n")
+        append("- NEVER ask fill-in-the-blank, word-for-word quotes, exact numbers, timestamps, names of people in stories, or what was said at a moment.\n")
+        append("- The question must make sense on its own without having just watched it. Mention the speaker by name where it helps.\n")
+        append("- Exactly 4 options, one correct. Wrong options must be believable, common-sense alternatives the video argues against, similar length to the right one.\n")
+        append("- \"explain\" is one short sentence stating the lesson.\n")
+        append("\nReply with ONLY this JSON and nothing else:\n")
+        append("{\"questions\":[{\"q\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],\"answer\":0,\"explain\":\"...\",\"at\":\"\"}]}")
+    }
+
     private fun parseReply(raw: String): List<Q> {
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')

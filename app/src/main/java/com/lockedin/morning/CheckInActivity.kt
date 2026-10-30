@@ -43,6 +43,7 @@ class CheckInActivity : Activity() {
     private var doom = ""          // "yes" / "no"
     private var round = 0
     private var questions: List<Bank.Item> = emptyList()
+    private var triedLessons = false
     private val answers = mutableListOf<Int>()
     private var deadline = 0L
     private var stage = "ask"      // ask → quiz → result → done
@@ -103,12 +104,22 @@ class CheckInActivity : Activity() {
         round++
         val n = p.recallQuestions.coerceIn(1, 20)
         questions = Bank.pick(this, n)
-        if (questions.isEmpty()) {
-            // No saved questions yet: make some from the latest video's transcript.
-            val t = Session.readTranscript(this)
-            questions = Quiz.builtIn(t, n).mapIndexed { i, q -> Bank.Item("local$i", q, p.videoTitle, p.videoAuthor, p.sessionDay) }
-        }
         answers.clear()
+        if (questions.isEmpty() && !triedLessons && Quiz.hasProvider(p)) {
+            // No lesson questions saved yet: write some about the latest video's teachings now.
+            triedLessons = true
+            round--
+            stage = "writing"
+            val col = column()
+            col.addView(label("Writing your quiz…", 26f, Color.WHITE, true))
+            col.addView(label("Questions on the lessons from your last video.", 15f, MUTED), lp(8))
+            show(col)
+            Thread {
+                Lessons.makeForLatest(this)
+                ui.post { if (!isFinishing) startQuiz() }
+            }.start()
+            return
+        }
         if (questions.isEmpty()) { showNoQuestions(); return }
         deadline = System.currentTimeMillis() + p.recallSeconds.coerceIn(60, 1800) * 1000L
         stage = "quiz"
@@ -214,7 +225,7 @@ class CheckInActivity : Activity() {
         stage = "result"
         val col = column()
         col.addView(label("Take a breather", 28f, Color.WHITE, true))
-        col.addView(label("There are no quiz questions yet. They come from your morning quizzes. For now, put the phone down for a minute.", 15f, MUTED), lp(8))
+        col.addView(label("No lesson questions yet. They're written by your quiz key from the videos you watch. For now, put the phone down for a minute.", 15f, MUTED), lp(8))
         val count = label("60", 44f, ORANGE, true)
         col.addView(count, lp(20))
         show(col)

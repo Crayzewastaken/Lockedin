@@ -128,6 +128,7 @@ object Session {
     /** Catch-up: the video + quiz is done but there's time left: line up the next video. */
     fun nextVideo(ctx: Context) {
         val p = Prefs(ctx)
+        if (p.watchedSec >= 300) Lessons.ensureAsync(ctx)
         if (p.videoId.isNotEmpty()) markWatched(p, p.videoId)
         p.phase = PICKING
         p.pickChosen = false
@@ -230,6 +231,7 @@ object Session {
         p.historyJson = trimmed.toString()
 
         if (p.videoId.isNotEmpty()) markWatched(p, p.videoId)
+        if (p.watchedSec >= 300) Lessons.ensureAsync(ctx)
         p.completedDay = p.sessionDay.ifEmpty { today() }
         p.catchUpTargetSec = 0
         p.catchUpDoneSec = 0

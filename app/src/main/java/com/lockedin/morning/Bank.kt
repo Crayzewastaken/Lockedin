@@ -35,6 +35,7 @@ object Bank {
         val existing = HashMap<String, JSONObject>()
         for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { existing[it.optString("id")] = it }
         qs.forEachIndexed { i, q ->
+            if (isBlankStyle(q.q)) return@forEachIndexed
             val id = idOf(q)
             val wrong = answers.getOrNull(i) != q.answer
             val o = existing[id]
@@ -63,16 +64,53 @@ object Bank {
 
     fun size(ctx: Context): Int = all(ctx).length()
 
+    fun isBlankStyle(q: String) = q.trimStart().startsWith("Fill in the blank", ignoreCase = true)
+
+    /** Lesson questions for a video (the ones the scroll check-in uses). */
+    @Synchronized
+    fun addLessons(ctx: Context, qs: List<Quiz.Q>, videoId: String, title: String, author: String, day: String) {
+        val arr = all(ctx)
+        val ids = HashSet<String>()
+        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { ids.add(it.optString("id")) }
+        for (q in qs) {
+            if (isBlankStyle(q.q)) continue
+            val id = idOf(q)
+            if (!ids.add(id)) continue
+            arr.put(
+                JSONObject().put("id", id).put("kind", "lesson").put("video", videoId)
+                    .put("q", q.q).put("options", JSONArray(q.options)).put("answer", q.options[q.answer])
+                    .put("explain", q.explain).put("at", "").put("title", title).put("author", author)
+                    .put("day", day).put("wrong", 0).put("seen", 0).put("lastSeen", 0L)
+            )
+        }
+        save(ctx, arr)
+        val done = (sp(ctx).getString("lessonVideos", "") ?: "").split(",").filter { it.isNotBlank() }.toMutableList()
+        if (videoId !in done) done.add(videoId)
+        sp(ctx).edit().putString("lessonVideos", done.takeLast(300).joinToString(",")).apply()
+    }
+
+    fun hasLessons(ctx: Context, videoId: String) =
+        videoId.isNotEmpty() && (sp(ctx).getString("lessonVideos", "") ?: "").split(",").contains(videoId)
+
+    fun lessonCount(ctx: Context): Int {
+        val arr = all(ctx); var c = 0
+        for (i in 0 until arr.length()) if (arr.optJSONObject(i)?.optString("kind") == "lesson") c++
+        return c
+    }
+
     /** Pick [n] questions, from previous days if there are any (today's as a fallback). */
     @Synchronized
     fun pick(ctx: Context, n: Int): List<Item> {
         val arr = all(ctx)
+        val lessonsOnly = lessonCount(ctx) >= n
         val today = Session.today()
         val items = mutableListOf<Pair<JSONObject, Double>>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val opts = o.optJSONArray("options") ?: continue
             if (opts.length() < 2) continue
+            if (isBlankStyle(o.optString("q"))) continue // never use fill-in-the-blank for check-ins
+            if (lessonsOnly && o.optString("kind") != "lesson") continue
             // Priority: got it wrong before, not seen for a long time, previous days first.
             val wrong = o.optInt("wrong")
             val ageH = (System.currentTimeMillis() - o.optLong("lastSeen")) / 3_600_000.0
