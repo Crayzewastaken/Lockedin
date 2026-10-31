@@ -272,11 +272,13 @@ class LockActivity : Activity() {
     }
 
     private fun showPicking() {
-        if (!p.pickChosen) { showVideoList(); return }
+        // Never ask: just pick a video from your YouTubers and play it.
+        p.pickChosen = true
         clear(Session.PICKING)
         val col = column()
-        col.addView(label("Good morning.", 30f, Color.WHITE, bold = true))
-        col.addView(label("Finding today's video from ${chosenChannels().joinToString()}…", 16f, MUTED))
+        val left = Session.catchUpLeftSec(p)
+        col.addView(label(if (p.catchUpTargetSec > 0 && left > 0) "Catch-up: ${Goal.hm(left.toDouble())} to go" else "Good morning.", 30f, Color.WHITE, bold = true))
+        col.addView(label("Loading your video…", 16f, MUTED))
         col.addView(ProgressBar(this).apply { isIndeterminate = true }, lp(top = 24))
         val status = label(if (p.pickError.isNotEmpty()) "Last try: ${p.pickError}" else "", 14f, MUTED)
         col.addView(status, lp(top = 16))
