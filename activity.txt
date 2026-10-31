@@ -1,0 +1,1 @@
+    topResumedActivity=ActivityRecord{3bb460e u0 com.lockedin.morning/.MainActivity t21}
