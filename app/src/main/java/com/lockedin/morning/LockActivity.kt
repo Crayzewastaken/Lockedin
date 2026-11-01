@@ -215,7 +215,7 @@ class LockActivity : Activity() {
         val emergency = label("Emergency exit", 12f, 0xFF66666C.toInt())
         emergency.gravity = Gravity.CENTER
         emergency.setOnClickListener { showEmergencyDialog() }
-        col.addView(emergency, lp(top = 28))
+        if (emergencyAvailable()) col.addView(emergency, lp(top = 28))
         root.addView(scroll(col))
 
         val chans = chosenChannels()
@@ -295,7 +295,7 @@ class LockActivity : Activity() {
         val emergency = label("Emergency exit", 12f, 0xFF66666C.toInt())
         emergency.gravity = Gravity.CENTER
         emergency.setOnClickListener { showEmergencyDialog() }
-        col.addView(emergency, lp(top = 32))
+        if (emergencyAvailable()) col.addView(emergency, lp(top = 32))
         root.addView(scroll(col))
 
         if (picking) return
@@ -392,7 +392,7 @@ class LockActivity : Activity() {
         val emergency = label("Emergency exit", 12f, 0xFF8A8A90.toInt())
         emergency.setPadding(dp(12), dp(6), dp(4), dp(6))
         emergency.setOnClickListener { showEmergencyDialog() }
-        top.addView(emergency)
+        if (emergencyAvailable()) top.addView(emergency)
         frame.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         // ---- bottom bar (two rows so it fits upright and sideways):
@@ -1012,7 +1012,16 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
 
     // ------------------------------------------------------------------ emergency + done
 
+    /** The emergency exit works once per app version: after using it, it's gone until the next update. */
+    private fun versionCode(): Long = try {
+        val pi = packageManager.getPackageInfo(packageName, 0)
+        if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
+    } catch (_: Exception) { 0L }
+
+    private fun emergencyAvailable(): Boolean = p.sp.getLong("emergencyUsedVersion", -1L) != versionCode()
+
     private fun showEmergencyDialog() {
+        if (!emergencyAvailable()) { toast("Emergency exit already used on this version."); return }
         val et = EditText(this).apply {
             hint = "Type the sentence exactly"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -1025,12 +1034,13 @@ function seek(t){ if(ready&&player){ player.seekTo(Math.max(0,t), true); } }
         }
         AlertDialog.Builder(this)
             .setTitle("Emergency exit")
-            .setMessage("For real emergencies only. Calls always work without this. Skipping is recorded in your history.")
+            .setMessage("You get ONE emergency exit, and it won't come back until the next app update. Calls always work without this.")
             .setView(box)
             .setPositiveButton("Unlock") { _, _ ->
                 val typed = et.text.toString().trim().trimEnd('.').lowercase()
                 if (typed == EMERGENCY_PHRASE.lowercase()) {
                     Stats.inc(this, Stats.EMERGENCIES)
+                    p.sp.edit().putLong("emergencyUsedVersion", versionCode()).commit()
                     Session.finish(this, "Emergency exit")
                     showDone("Unlocked. Tomorrow's session will run as normal.")
                 } else {
